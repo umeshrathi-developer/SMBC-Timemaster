@@ -122,9 +122,9 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'umesh.rathi@infobeans.com'
-EMAIL_HOST_PASSWORD = 'tpau ezxt wghj llzw'
-DEFAULT_FROM_EMAIL = 'umesh.rathi@infobeans.com'
+EMAIL_HOST_USER = '' # Get value from environment variable
+EMAIL_HOST_PASSWORD = '' # Get value from environment variable
+DEFAULT_FROM_EMAIL = '' # Get email from environment variable
 
 # ============ LOGGING CONFIGURATION ============
 LOGGING = {
