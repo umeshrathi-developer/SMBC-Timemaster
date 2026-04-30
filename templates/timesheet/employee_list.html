@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+
+{% block title %}Employees - Timesheet Comp-Off & Management{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="page-title mb-0">
+        <i class="bi bi-people"></i> Employee Management
+    </h1>
+    <a href="{% url 'employee_add' %}" class="btn btn-primary">
+        <i class="bi bi-person-plus"></i> Add New Employee
+    </a>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-6">
+                <input type="search" name="search" class="form-control" placeholder="Search by name, ID, email, project, department, manager..." value="{{ search_query }}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-outline-secondary">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                {% if search_query %}
+                <a href="{% url 'employee_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        {% if employees %}
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Employee ID</th>
+                    <th>Email</th>
+                    <th>Department</th>
+                    <th>Project</th>
+                    <th>Manager</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th class="text-center">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for employee in employees %}
+                <tr>
+                    <td><strong>{{ employee.name }}</strong></td>
+                    <td>{{ employee.employee_id }}</td>
+                    <td>{{ employee.email|default:"-" }}</td>
+                    <td>{{ employee.project.department_name|default:"-" }}</td>
+                    <td>{{ employee.project.project|default:"-" }}</td>
+                    <td>{{ employee.project.manager|default:"-" }}</td>
+                    <td>{{ employee.location|default:"-" }}</td>
+                    <td>
+                        {% if employee.is_active %}
+                        <span class="badge bg-success">Active</span>
+                        {% else %}
+                        <span class="badge bg-danger">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <a href="{% url 'employee_report' employee.id %}" class="btn btn-sm btn-info btn-action" title="View Report">
+                            <i class="bi bi-bar-chart"></i>
+                        </a>
+                        <a href="{% url 'employee_edit' employee.id %}" class="btn btn-sm btn-primary btn-action" title="Edit">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <form action="{% url 'employee_delete' employee.id %}" method="post" style="display:inline;" onsubmit="return confirm('Are you sure?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-danger btn-action" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="p-5 text-center text-muted">
+            <i class="bi bi-inbox" style="font-size: 2rem; opacity: 0.5;"></i>
+            <p class="mt-3 mb-0">
+                {% if search_query %}
+                    No employees found matching "{{ search_query }}".
+                {% else %}
+                    No employees yet. <a href="{% url 'employee_add' %}">Add your first employee</a>
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

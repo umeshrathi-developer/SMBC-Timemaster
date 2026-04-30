@@ -1,0 +1,529 @@
+<!-- Client reporting Timesheet reporting list form -->
+{% extends 'base.html' %}
+{% load filters %}
+
+{% block title %}{% if is_admin %}Timesheet Management{% else %}My Timesheet{% endif %} - Timesheet Comp-Off & Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .holiday-weekend-row td,
+    .holiday-weekend-row th {
+        background-color: #add8e6 !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="page-title mb-0">
+        <i class="bi bi-file-earmark-text"></i> {% if is_admin %}Timesheet Management{% else %}My Timesheet{% endif %}
+    </h1>
+</div>
+
+<!-- Month and Employee Selection -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            {% if is_admin %}
+            <div class="col-md-3">
+                <label for="employee" class="form-label">
+                    <i class="bi bi-person"></i> Select Employee
+                </label>
+                <select name="employee" id="employee" class="form-select">
+                    <option value="">-- Select Employee --</option>
+                    {% for emp in all_employees %}
+                    <option value="{{ emp.id }}" {% if emp.id|stringformat:"s" == selected_employee_id %}selected{% endif %}>
+                        {{ emp.name }} ({{ emp.employee_id }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-md-{% if is_admin %}3{% else %}4{% endif %}">
+                <label for="month" class="form-label">
+                    <i class="bi bi-calendar3"></i> Select Month
+                </label>
+                <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-funnel"></i> View
+                </button>
+            </div>
+            <div class="col-md-2">
+                <a href="{% url 'timesheet_entry_list' %}" class="btn btn-outline-secondary w-100">
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if employee %}
+<!-- Status Alert -->
+{% if all_submitted %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+    <i class="bi bi-check-circle"></i>
+    <strong>Complete!</strong> The entire month's timesheet has been submitted.
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% elif submitted %}
+<div class="alert alert-warning alert-dismissible fade show" role="alert">
+    <i class="bi bi-exclamation-circle"></i>
+    <strong>Partial Submission!</strong> Some entries are submitted. You can still edit and submit remaining draft entries for other dates.
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- Month Summary -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">
+                    <i class="bi bi-calendar-event"></i> Month
+                </h6>
+                <h3 class="card-title mb-0">{{ month_display }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">
+                    <i class="bi bi-clock-history"></i> Total Hours
+                </h6>
+                <h3 class="card-title mb-0">{{ total_hours }} hrs</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Generate Timesheet Button -->
+{% if not all_submitted %}
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title mb-3">
+            <i class="bi bi-lightning"></i> Quick Fill Timesheet
+        </h5>
+        <p class="text-muted mb-3">Use the generate tool to automatically create timesheet entries for weekdays within a date range.</p>
+        <button type="button" id="generateBtn" class="btn btn-info">
+            <i class="bi bi-plus-circle"></i> Generate Timesheet Entries
+        </button>
+    </div>
+</div>
+{% endif %}
+
+<!-- Timesheet Entries Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            <i class="bi bi-table"></i> Timesheet Entries
+        </h5>
+        {% if not all_submitted %}
+        {% if is_admin %}
+        <a href="{% url 'timesheet_entry_add' %}?month={{ selected_month }}&employee={{ selected_employee_id }}" class="btn btn-sm btn-success">
+            <i class="bi bi-plus"></i> Add Entry
+        </a>
+        {% else %}
+        <a href="{% url 'timesheet_entry_add' %}?month={{ selected_month }}" class="btn btn-sm btn-success">
+            <i class="bi bi-plus"></i> Add Entry
+        </a>
+        {% endif %}
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if entries %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th><i class="bi bi-calendar"></i> Date</th>
+                        <th><i class="bi bi-briefcase"></i> Project</th>
+                        <th><i class="bi bi-clock"></i> Hours</th>
+                        <th><i class="bi bi-chat-left-text"></i> Comments</th>
+                        <th><i class="bi bi-tag"></i> Status</th>
+                        <th style="width: 120px;"><i class="bi bi-gear"></i> Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in entries %}
+                    <tr {% if entry.date|in_list:holiday_dates %}class="holiday-weekend-row"{% endif %}>
+                        <td>
+                            <strong>{{ entry.date|date:"M d, Y" }}</strong>
+                            <br>
+                            <small class="text-muted">{{ entry.date|date:"l" }}</small>
+                        </td>
+                        <td>{{ entry.project }}</td>
+                        <td>
+                            <span class="badge bg-primary">{{ entry.hours }} hrs</span>
+                        </td>
+                        <td>
+                            {% if entry.comments %}
+                                <small>{{ entry.comments|truncatewords:10 }}</small>
+                            {% else %}
+                                <small class="text-muted">-</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if entry.status == 'SUBMITTED' %}
+                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Submitted</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-pencil"></i> Draft</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if entry.status == 'DRAFT' %}
+                            <div class="btn-group btn-group-sm" role="group">
+                                <a href="{% url 'timesheet_entry_edit' entry.pk %}?month={{ selected_month }}" class="btn btn-outline-primary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <button type="button" class="btn btn-outline-danger delete-entry-btn" data-entry-id="{{ entry.pk }}" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                            {% else %}
+                            <small class="text-muted">Read-only</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 3rem; color: #dee2e6;"></i>
+            <p class="text-muted mt-3">No timesheet entries for {{ month_display }}</p>
+            {% if not all_submitted %}
+            <a href="{% url 'timesheet_entry_add' %}" class="btn btn-primary">
+                <i class="bi bi-plus"></i> Add First Entry
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Submit Timesheet Button -->
+{% if not all_submitted and has_draft %}
+<div class="mt-4">
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title mb-3">
+                <i class="bi bi-check-circle"></i> Submit Timesheet
+            </h5>
+            {% if submitted %}
+            <p class="text-muted mb-4">You have partial submissions. You can continue submitting remaining draft entries for other date ranges.</p>
+            {% else %}
+            <p class="text-muted mb-4">You can submit your entire month's timesheet at once, or submit in parts (e.g., 1-15, then 16-30).</p>
+            {% endif %}
+            <div class="d-grid gap-2 d-md-flex">
+                <button type="button" class="btn btn-lg btn-success me-2" id="submitFullMonth">
+                    <i class="bi bi-check-lg"></i> Submit Full Month
+                </button>
+                <button type="button" class="btn btn-lg btn-info" data-bs-toggle="modal" data-bs-target="#partialSubmitModal">
+                    <i class="bi bi-calendar-range"></i> Submit Date Range
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Full Month Submission Form (hidden) -->
+<form id="submitFullMonthForm" method="POST" action="{% url 'timesheet_entry_submit' %}" style="display: none;">
+    {% csrf_token %}
+    <input type="hidden" name="month" value="{{ selected_month }}">
+    <input type="hidden" name="submit_all" value="true">
+    {% if is_admin %}
+    <input type="hidden" name="employee" value="{{ selected_employee_id }}">
+    {% endif %}
+</form>
+
+<!-- Partial Submission Modal -->
+<div class="modal fade" id="partialSubmitModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-calendar-range"></i> Submit Date Range
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{% url 'timesheet_entry_submit' %}">
+                {% csrf_token %}
+                <input type="hidden" name="month" value="{{ selected_month }}">
+                <input type="hidden" name="submit_all" value="false">
+                {% if is_admin %}
+                <input type="hidden" name="employee" value="{{ selected_employee_id }}">
+                {% endif %}
+                
+                <div class="modal-body">
+                    <p class="text-muted mb-3">Select the date range you want to submit for {{ month_display }}. This allows you to submit timesheet in parts.</p>
+                    <div class="mb-3">
+                        <label for="partialFromDate" class="form-label">From Date</label>
+                        <input type="date" class="form-control" name="from_date" id="partialFromDate" required>
+                        <small class="text-muted">Starting date (inclusive)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="partialToDate" class="form-label">To Date</label>
+                        <input type="date" class="form-control" name="to_date" id="partialToDate" required>
+                        <small class="text-muted">Ending date (inclusive)</small>
+                    </div>
+                    <div class="alert alert-info alert-sm">
+                        <i class="bi bi-info-circle"></i>
+                        <small><strong>Note:</strong> You can submit timesheet in multiple parts. For example, submit days 1-15 on the 15th, then submit days 16-30 on the 30th. Pending CompOffs will be automatically used for any missing weekdays in the submitted range.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Submit Range
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info alert-dismissible fade show" role="alert">
+    <i class="bi bi-info-circle"></i>
+    <strong>Please select an employee</strong> to view their timesheet.
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- Generate Timesheet Modal -->
+<div class="modal fade" id="generateModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-lightning"></i> Generate Timesheet Entries
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{% url 'generate_timesheet_weekdays' %}">
+                {% csrf_token %}
+                <input type="hidden" name="month" value="{{ selected_month }}">
+                {% if is_admin %}
+                <input type="hidden" name="employee" value="{{ selected_employee_id }}">
+                {% endif %}
+                
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="fromDate" class="form-label">From Date</label>
+                        <input type="date" class="form-control" name="from_date" id="fromDate" required>
+                        <small class="text-muted">Starting date for timesheet generation</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="toDate" class="form-label">To Date</label>
+                        <input type="date" class="form-control" name="to_date" id="toDate" required>
+                        <small class="text-muted">Ending date (inclusive)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="projectName" class="form-label">Project Name</label>
+                        <select class="form-select" name="project" id="projectName" {% if not available_projects %}disabled{% endif %} required>
+                            <option value="">-- Select Project --</option>
+                            {% for project_value, project_label in available_projects %}
+                            <option value="{{ project_value }}">{{ project_label }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Select the project assigned to this employee</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="hoursPerDay" class="form-label">Hours Per Day</label>
+                        <input type="number" class="form-control" name="hours_per_day" id="hoursPerDay" value="8" step="1" min="0" max="12" required>
+                        <small class="text-muted">Hours to log for each day (0-12)</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Include Weekends</label>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" name="include_saturday" id="includeSaturday">
+                            <label class="form-check-label" for="includeSaturday">
+                                <i class="bi bi-calendar-event"></i> Saturday
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" name="include_sunday" id="includeSunday">
+                            <label class="form-check-label" for="includeSunday">
+                                <i class="bi bi-calendar-event"></i> Sunday
+                            </label>
+                        </div>
+                        <small class="text-muted">Check to include Saturdays and/or Sundays in the generated entries</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="generatedComments" class="form-label">Comments</label>
+                        <input type="text" class="form-control" name="comments" id="generatedComments" placeholder="Optional - same for all entries">
+                        <small class="text-muted">Optional comments for all generated entries</small>
+                    </div>
+                    <div class="alert alert-info alert-sm">
+                        <i class="bi bi-info-circle"></i>
+                        <small>This will create entries for <strong>weekdays</strong> (Monday-Friday) by default. You can optionally include Saturdays and/or Sundays. Existing entries won't be duplicated.</small>
+                    </div>
+                    {% if not available_projects %}
+                    <div class="alert alert-warning alert-sm mb-0">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <small>No project is assigned to this employee yet, so timesheet entries cannot be generated.</small>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" {% if not available_projects %}disabled{% endif %}>
+                        <i class="bi bi-plus-circle"></i> Generate
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle submit full month button
+        const submitFullMonthBtn = document.getElementById('submitFullMonth');
+        if (submitFullMonthBtn) {
+            submitFullMonthBtn.addEventListener('click', function() {
+                if (confirm('Are you sure you want to submit the entire timesheet for {{ month_display }}? This action cannot be undone for the submitted entries.')) {
+                    document.getElementById('submitFullMonthForm').submit();
+                }
+            });
+        }
+
+        // Handle partial submission modal - set month start/end dates
+        const partialSubmitModal = document.getElementById('partialSubmitModal');
+        if (partialSubmitModal) {
+            partialSubmitModal.addEventListener('show.bs.modal', function() {
+                // Get the month from selected_month (YYYY-MM format)
+                const monthStr = '{{ selected_month }}';
+                if (monthStr) {
+                    const [year, month] = monthStr.split('-');
+                    const monthNum = parseInt(month);
+                    
+                    // Set min/max dates to the selected month
+                    const fromDateInput = document.getElementById('partialFromDate');
+                    const toDateInput = document.getElementById('partialToDate');
+                    
+                    // First day of the month
+                    fromDateInput.min = `${year}-${month}-01`;
+                    
+                    // Last day of the month
+                    const lastDay = new Date(parseInt(year), monthNum, 0).getDate();
+                    toDateInput.max = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+                    fromDateInput.max = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+                    toDateInput.min = `${year}-${month}-01`;
+                }
+            });
+        }
+
+        // Handle generate modal button via JS to avoid Bootstrap data attribute handler issues
+        const generateBtn = document.getElementById('generateBtn');
+        if (generateBtn) {
+            generateBtn.addEventListener('click', function() {
+                const modalEl = document.getElementById('generateModal');
+                if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                    try {
+                        new bootstrap.Modal(modalEl).show();
+                    } catch (err) {
+                        console.error('Error showing generate modal:', err);
+                    }
+                }
+            });
+        }
+        // Handle delete button clicks with AJAX
+        const deleteButtons = document.querySelectorAll('.delete-entry-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                const entryId = this.getAttribute('data-entry-id');
+                const row = this.closest('tr');
+                
+                // Send DELETE request via AJAX
+                fetch(`/timesheet/my-timesheet/${entryId}/delete/`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Remove row from table with fade animation
+                        row.style.opacity = '0';
+                        row.style.transition = 'opacity 0.3s ease';
+                        setTimeout(() => {
+                            row.remove();
+                            // Show success message
+                            showMessage(data.message, 'success');
+                            // Update total hours
+                            updateTotalHours();
+                        }, 300);
+                    } else {
+                        showMessage(data.message, 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showMessage('An error occurred while deleting the entry.', 'error');
+                });
+            });
+        });
+    });
+
+    // Helper function to show temporary messages
+    function showMessage(message, type) {
+        const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+        const alertHtml = `
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                ${type === 'success' ? '<i class="bi bi-check-circle"></i>' : '<i class="bi bi-x-circle"></i>'}
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+        const alertContainer = document.querySelector('.alert-container') || document.querySelector('main');
+        if (alertContainer) {
+            const newAlert = document.createElement('div');
+            newAlert.innerHTML = alertHtml;
+            alertContainer.insertBefore(newAlert.firstElementChild, alertContainer.firstChild);
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                const alert = alertContainer.querySelector('.alert');
+                if (alert) {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }
+            }, 5000);
+        }
+    }
+
+    // Helper function to update total hours
+    function updateTotalHours() {
+        const table = document.querySelector('table');
+        if (!table) return;
+        
+        const rows = table.querySelectorAll('tbody tr');
+        let total = 0;
+        rows.forEach(row => {
+            const hoursCell = row.querySelector('td:nth-child(3)');
+            if (hoursCell) {
+                const hoursText = hoursCell.textContent.trim();
+                const hours = parseFloat(hoursText);
+                if (!isNaN(hours)) {
+                    total += hours;
+                }
+            }
+        });
+        
+        // Update the total hours display if it exists
+        const totalDisplay = document.querySelector('.card .card-body h3');
+        if (totalDisplay) {
+            totalDisplay.textContent = total + ' hrs';
+        }
+    }
+</script>
+
+{% endblock %}

@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Import Timesheet Data - Timesheet Comp-Off & Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="page-title mb-0">
+                <i class="bi bi-cloud-upload"></i> Import Timesheet Data
+            </h1>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">Upload Excel File</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Error!</strong>
+                        {% for error in form.non_field_errors %}
+                        <div>{{ error }}</div>
+                        {% endfor %}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                    {% endif %}
+
+                    <!-- File Upload Field -->
+                    <div class="mb-4">
+                        <label for="{{ form.file.id_for_label }}" class="form-label">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Excel File
+                            {% if form.file.field.required %}<span class="text-danger">*</span>{% endif %}
+                        </label>
+                        <div class="input-group">
+                            <input type="file" class="form-control" id="{{ form.file.id_for_label }}" name="{{ form.file.name }}" accept=".xlsx,.xls" required>
+                            <span class="input-group-text">.xlsx / .xls only</span>
+                        </div>
+                        {% if form.file.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.file.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <small class="text-muted d-block mt-2">
+                            <i class="bi bi-info-circle"></i> File should contain sheets: "Timesheet Summary", "Timesheet Details", "Attendance Summary", "Attendance Details"
+                        </small>
+                    </div>
+
+                    <!-- Import Date Field -->
+                    <div class="mb-4">
+                        <label for="{{ form.import_date.id_for_label }}" class="form-label">
+                            <i class="bi bi-calendar3"></i> Import Month
+                            {% if form.import_date.field.required %}<span class="text-danger">*</span>{% endif %}
+                        </label>
+                        {{ form.import_date }}
+                        {% if form.import_date.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.import_date.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <!-- <small class="text-muted d-block mt-2">Month/year when this timesheet data was recorded</small> -->
+                    </div>
+
+                    <!-- Notes Field -->
+                    <div class="mb-4">
+                        <label for="{{ form.notes.id_for_label }}" class="form-label">
+                            <i class="bi bi-chat-left-text"></i> Notes (Optional)
+                        </label>
+                        {{ form.notes }}
+                        {% if form.notes.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.notes.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <!-- <small class="text-muted d-block mt-2">Add any notes about this import</small> -->
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="bi bi-cloud-upload"></i> Import Data
+                        </button>
+                        <a href="{% url 'timesheet_data' %}" class="btn btn-secondary btn-lg">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Information Panel -->
+        <div class="card mt-4">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-lightbulb"></i> Import Guidelines
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="fw-bold mb-2">Expected File Structure:</h6>
+                        <ul class="small">
+                            <li><strong>Timesheet Summary</strong> - Team member hours per project</li>
+                            <li><strong>Timesheet Details</strong> - Day-by-day timesheet entries</li>
+                            <li><strong>Attendance Summary</strong> - Monthly attendance overview</li>
+                            <li><strong>Attendance Details</strong> - Day-by-day attendance records</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="fw-bold mb-2">Important Notes:</h6>
+                        <ul class="small">
+                            <li>File must be in .xlsx or .xls format</li>
+                            <li>All sheets must be present in the file</li>
+                            <li>Data is appended to existing records (not replaced)</li>
+                            <li>Import date helps track when data was recorded</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload History -->
+        <div class="card mt-4">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-clock-history"></i> Recent Imports
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if import_logs %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Import Date</th>
+                                <th>Uploaded By</th>
+                                <th>Uploaded On</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in import_logs %}
+                            <tr>
+                                <td><strong>{{ log.import_date|date:"F Y" }}</strong></td>
+                                <td>{{ log.uploaded_by.get_full_name|default:log.uploaded_by.username }}</td>
+                                <td><small>{{ log.created_date|date:"d/m/Y H:i" }}</small></td>
+                                <td><small>{{ log.notes|truncatewords:10 }}</small></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">No imports have been made yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

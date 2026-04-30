@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+
+{% block title %}CompOffs - Timesheet Comp-Off & Management{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="page-title mb-0">
+        <i class="bi bi-calendar-x"></i> Comp-Off Management
+    </h1>
+    <a href="{% url 'compoff_add' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Add CompOff
+    </a>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label for="employee" class="form-label">Employee</label>
+                <select name="employee" id="employee" class="form-select">
+                    {% if is_admin %}
+                    <option value="">All Employees</option>
+                    {% endif %}
+                    {% for emp in employees %}
+                    <option value="{{ emp.id }}" {% if emp.id|stringformat:"s" == selected_employee %}selected{% endif %}>
+                        {{ emp.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="status" class="form-label">Status</label>
+                <select name="status" id="status" class="form-select">
+                    <option value="">All Status</option>
+                    <option value="PENDING" {% if selected_status == 'PENDING' %}selected{% endif %}>Pending</option>
+                    <option value="TAKEN" {% if selected_status == 'TAKEN' %}selected{% endif %}>Taken</option>
+                </select>
+            </div>
+            <div class="col-md-auto">
+                <label class="form-label d-block">&nbsp;</label>
+                <button type="submit" class="btn btn-outline-secondary">
+                    <i class="bi bi-filter"></i> Filter
+                </button>
+                {% if selected_employee or selected_status %}
+                <a href="{% url 'compoff_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- CompOffs Table -->
+<div class="card">
+    <div class="card-body p-0">
+        {% if compoffs %}
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Employee</th>
+                    <th>Status</th>
+                    <th>CompOff Date</th>
+                    <th>Work Date</th>
+                    <th>Created On</th>
+                    <th class="text-center">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for compoff in compoffs %}
+                <tr>
+                    <td><strong>{{ compoff.employee.name }}</strong></td>
+                    <td>
+                        <span class="badge bg-{% if compoff.status == 'PENDING' %}warning{% elif compoff.status == 'TAKEN' %}success{% else %}danger{% endif %}">
+                            {{ compoff.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if compoff.compoff_date %}
+                            {{ compoff.compoff_date|date:"d/m/Y" }}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if compoff.working_date %}
+                            {{ compoff.working_date|date:"d/m/Y" }}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td><small>{{ compoff.created_date|date:"d/m/Y" }}</small></td>
+                    <td class="text-center">
+                        <a href="{% url 'compoff_edit' compoff.id %}" class="btn btn-sm btn-primary btn-action" title="Edit">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <form action="{% url 'compoff_delete' compoff.id %}" method="post" style="display:inline;" onsubmit="return confirm('Are you sure?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-danger btn-action" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="p-5 text-center text-muted">
+            <i class="bi bi-inbox" style="font-size: 2rem; opacity: 0.5;"></i>
+            <p class="mt-3 mb-0">No CompOffs found. <a href="{% url 'compoff_add' %}">Create one</a></p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

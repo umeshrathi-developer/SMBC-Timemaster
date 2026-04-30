@@ -1,0 +1,169 @@
+<!-- Client reporting list page -->
+{% extends 'base.html' %}
+{% load filters %}
+
+{% block title %}Client Reporting - Timesheet Comp-Off & Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .holiday-weekend-row td,
+    .holiday-weekend-row th {
+        background-color: #add8e6 !important;
+    }
+    .compoff-taken-cell {
+        background-color: #d3d3d3 !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="page-title mb-0">
+            <i class="bi bi-file-earmark-spreadsheet"></i> Client Reporting
+        </h1>
+        <!-- <small class="text-muted">Generate client reporting by employee and date range.</small> -->
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row gy-3 gx-3 align-items-end">
+            <div class="col-md-4">
+                <label for="manager" class="form-label">Approver PM (Manager)</label>
+                <select id="manager" name="manager" class="form-select">
+                    <option value="">Select manager</option>
+                    {% for manager in managers %}
+                    <option value="{{ manager }}" {% if manager == selected_manager %}selected{% endif %}>{{ manager }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="start_date" class="form-label">Start Date</label>
+                <input id="start_date" name="start_date" type="date" class="form-control" value="{{ start_date }}">
+            </div>
+            <div class="col-md-3">
+                <label for="end_date" class="form-label">End Date</label>
+                <input id="end_date" name="end_date" type="date" class="form-control" value="{{ end_date }}">
+            </div>
+            <div class="col-md-2 text-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Generate
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if selected_manager %}
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Approver PM</h5>
+        <div class="row">
+            <div class="col-md-4">
+                <strong>{{ selected_manager }}</strong>
+            </div>
+            <div class="col-md-4">
+                <strong>Total Employees:</strong> {{ employees|length }}
+            </div>
+            <div class="col-md-4 text-end">
+                {% if report_rows %}
+                <form method="post" class="d-inline" id="emailReportForm" onsubmit="return confirmEmailReport()">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="email_report">
+                    <input type="hidden" name="manager" value="{{ selected_manager }}">
+                    <input type="hidden" name="start_date" value="{{ start_date }}">
+                    <input type="hidden" name="end_date" value="{{ end_date }}">
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-envelope"></i> Email Client Report
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-body p-0">
+        {% if selected_manager and employees %}
+            {% if report_rows %}
+            <div class="table-responsive">
+                <table class="table table-bordered mb-0 text-center align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col">Date</th>
+                            {% for employee in employees %}
+                            <th scope="col">{{ employee.name }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_rows %}
+                        <tr {% if row.is_holiday_or_weekend %}class="holiday-weekend-row"{% endif %}>
+                            <td class="text-start">
+                                <strong>{{ row.date|date:'d-M-Y' }}</strong>
+                                {% if row.date_type %}
+                                <div><small class="text-muted">{{ row.date_type }}</small></div>
+                                {% endif %}
+                            </td>
+                            {% for value in row.hours %}
+                            <td {% if row.compoff_taken|get_item:forloop.counter0 %}class="compoff-taken-cell"{% endif %}>{% if value %}{{ value }}{% else %}&nbsp;{% endif %}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                        <tr class="table-primary">
+                            <th class="text-start">Billable Efforts</th>
+                            {% for total in employee_totals %}
+                            <th>{{ total }}</th>
+                            {% endfor %}
+                        </tr>
+                        <tr class="table-warning">
+                            <th class="text-start">Accrual Pending in Hours</th>
+                            {% for hours in accrual_pending_hours_list %}
+                            <th>{{ hours }}</th>
+                            {% endfor %}
+                        </tr>
+                        <tr class="table-warning">
+                            <th class="text-start">Accrual Days</th>
+                            {% for days in accrual_days_list %}
+                            <th>{{ days }}</th>
+                            {% endfor %}
+                        </tr>
+                        <tr class="table-warning">
+                            <th class="text-start">Accrual Adjusted</th>
+                            {% for adjusted in accrual_adjusted_list %}
+                            <th>{{ adjusted }}</th>
+                            {% endfor %}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-4 text-center text-muted">
+                <i class="bi bi-inbox" style="font-size: 2rem; opacity: 0.5;"></i>
+                <p class="mt-3 mb-0">No timesheet data available for the selected date range.</p>
+            </div>
+            {% endif %}
+        {% elif selected_manager and not employees %}
+        <div class="p-4 text-center text-muted">
+            <i class="bi bi-exclamation-triangle" style="font-size: 2rem; opacity: 0.5;"></i>
+            <p class="mt-3 mb-0">No active employees found for the selected manager.</p>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            <i class="bi bi-info-circle" style="font-size: 2rem; opacity: 0.5;"></i>
+            <p class="mt-3 mb-0">Choose a manager and date range to generate the timesheet report.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function confirmEmailReport() {
+    const message = "Have you validated the timesheet?\nAre you sure you want to send the timesheet report to respective stakeholders on client side?";
+    return confirm(message);
+}
+</script>
+{% endblock %}
