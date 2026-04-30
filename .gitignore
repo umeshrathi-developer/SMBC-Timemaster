@@ -38,7 +38,7 @@ db/
 .env.local
 staticfiles/
 media/
-/static/
+# /static/
 __pycache__/
 .pytest_cache/
 htmlcov/
