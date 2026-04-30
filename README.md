@@ -81,7 +81,7 @@ Timemaster automation/
 
 ### Employee
 - **name**: Full name of employee
-- **employee_id**: Unique employee ID (e.g., EMP-001)
+- **employee_id**: Unique employee ID (e.g., 001)
 - **email**: Employee email address
 - **department**: Department name
 - **is_active**: Active status
@@ -100,7 +100,7 @@ Timemaster automation/
 - **employee**: Foreign key to Employee
 - **timesheet**: Links to associated Timesheet record
 - **compoff_date**: Date when Comp-Off will be/was taken (optional, can be updated later)
-- **status**: Status (PENDING, APPROVED, TAKEN, CANCELLED)
+- **status**: Status (PENDING, TAKEN)
 - **notes**: Additional notes
 - **created_date**: Record creation date
 - **updated_date**: Last update date
@@ -108,6 +108,7 @@ Timemaster automation/
 ### Holiday
 - **date**: Holiday/Weekend date
 - **holiday_type**: Type (HOLIDAY, WEEKEND, SPECIAL)
+  SPECIAL is holiday by SMBC and not allowed to and a mandatory day off.
 - **description**: Holiday name/description
 - **created_date**: Record creation date
 
@@ -246,42 +247,10 @@ Replace `localhost` with server's IP address:
 http://192.168.1.100:8000/timesheet/
 ```
 
-3. **Using Gunicorn (Recommended for Production)**:
-```bash
-pip install gunicorn
-gunicorn timemaster_project.wsgi:application --bind 0.0.0.0:8000
-```
-
-4. **Using Nginx (Reverse Proxy)**:
-Configure Nginx to forward requests to Gunicorn for better performance and security.
-
-## Backup & Data Export
-
-### Django Dumpdata (Backup)
-```bash
-# Backup all data
-python manage.py dumpdata > backup.json
-
-# Backup specific app
-python manage.py dumpdata timesheet > timesheet_backup.json
-
-# Restore from backup
-python manage.py loaddata backup.json
-```
 
 ### Export to CSV
 Data can be exported from the admin interface or custom management commands can be created.
 
-## Future Enhancements
-
-- [ ] CSV/Excel import and export functionality
-- [ ] Email notifications for Comp-Off approvals
-- [ ] Dashboard charts and graphs
-- [ ] API endpoints for mobile app integration
-- [ ] Leave balance calculation
-- [ ] Approval workflow for managers
-- [ ] Holiday calendar management
-- [ ] Audit logs and activity tracking
 
 ## Troubleshooting
 
@@ -289,14 +258,6 @@ Data can be exported from the admin interface or custom management commands can 
 ```bash
 # Use different port
 python manage.py runserver 0.0.0.0:8001
-```
-
-### Database Locked (SQLite)
-```bash
-# Delete database and start fresh
-rm db.sqlite3
-python manage.py migrate
-python manage.py createsuperuser
 ```
 
 ### Static Files Not Loading
@@ -307,12 +268,8 @@ python manage.py collectstatic
 ### Permission Denied
 Ensure the user running Django has read/write permissions to the project directory.
 
-## Support & Maintenance
-
-For issues or feature requests, please contact the system administrator.
 
 ## License
-
 Internal Use Only - Company Proprietary
 
 ---
