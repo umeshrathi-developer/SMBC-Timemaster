@@ -53,6 +53,7 @@ urlpatterns = [
     
     # Import Timesheet Data
     path('import-timesheet/', views.import_timesheet_data, name='import_timesheet_data'),
+    path('import-client-timesheet/', views.import_client_timesheet_entries, name='import_client_timesheet_entries'),
     
     # Timesheet Entry Management (User Input)
     path('my-timesheet/', views.timesheet_entry_list, name='timesheet_entry_list'),

@@ -14,7 +14,10 @@ from datetime import datetime, date, timedelta
 import logging
 import threading
 from .models import Project, Employee, CompOff, Holiday, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetEntry
-from .forms import EmployeeForm, CompOffForm, UserRegistrationForm, ChangePasswordForm, PasswordResetSelectionForm, TimesheetEntryForm
+from .forms import (
+    EmployeeForm, CompOffForm, UserRegistrationForm, ChangePasswordForm,
+    PasswordResetSelectionForm, TimesheetEntryForm, ClientTimesheetImportForm
+)
 
 # Initialize loggers
 logger = logging.getLogger('timesheet')
@@ -77,6 +80,19 @@ def send_html_email_async(subject, html_message, from_email, recipients, success
             logger.error(f"{failure_log_message}: {str(exc)}")
 
     threading.Thread(target=_send, daemon=True).start()
+
+
+def get_report_email_recipients():
+    """Return configured report recipients as a clean list of email strings."""
+    recipients = getattr(settings, 'REPORT_EMAIL_RECIPIENTS', [])
+    if isinstance(recipients, str):
+        recipients = recipients.split(',')
+
+    return [
+        str(recipient).strip()
+        for recipient in recipients
+        if str(recipient).strip()
+    ]
 
 
 def get_location_holiday_filter(location):
@@ -822,7 +838,7 @@ def client_reporting(request):
             elif not report_rows:
                 messages.error(request, 'Report has no rows. Please check the date range.')
             else:
-                recipients = ["umesh.rathi@infobeans.com"]
+                recipients = get_report_email_recipients()
                 if not recipients:
                     messages.error(request, 'No valid email recipients found for the selected manager or employees.')
                 else:
@@ -961,7 +977,7 @@ def accrual_summary(request):
             elif not accrual_data:
                 messages.error(request, 'No accrual data available. Please check the date range.')
             else:
-                recipients = ["umesh.rathi@infobeans.com"]
+                recipients = get_report_email_recipients()
                 if not recipients:
                     messages.error(request, 'No valid email recipients found for the selected manager or employees.')
                 else:
@@ -1868,4 +1884,94 @@ def import_timesheet_data(request):
         'import_logs': TimesheetImportLog.objects.all().order_by('-created_date')[:10],
     }
     return render(request, 'timesheet/import_timesheet.html', context)
+
+
+@login_required(login_url='login')
+def import_client_timesheet_entries(request):
+    """Import client timesheet entries for multiple employees - Admin only"""
+    if not is_admin(request.user):
+        access_logger.warning(
+            f"Unauthorized access attempt to import_client_timesheet_entries by user: {request.user.username}"
+        )
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    from .utils import import_client_timesheet_entries as import_entries
+
+    import_logger = logging.getLogger('timesheet.import')
+    client_import_status = getattr(settings, 'CLIENT_TIMESHEET_IMPORT_STATUS', 'DRAFT')
+
+    if request.method == 'POST':
+        form = ClientTimesheetImportForm(request.POST, request.FILES)
+        if form.is_valid():
+            uploaded_file = form.cleaned_data['file']
+            import_date = form.cleaned_data['import_date']
+            notes = form.cleaned_data.get('notes', '')
+            overwrite_drafts = form.cleaned_data['overwrite_drafts']
+            result = import_entries(
+                uploaded_file,
+                overwrite_drafts=overwrite_drafts,
+                import_date=import_date,
+                notes=notes
+            )
+
+            from .models import TimesheetImportLog
+
+            if result['success']:
+                TimesheetImportLog.objects.create(
+                    import_date=import_date,
+                    uploaded_by=request.user,
+                    notes=(
+                        f"Client Timesheet Import\n"
+                        f"Created: {result['created_count']}\n"
+                        f"Updated: {result['updated_count']}\n"
+                        f"Skipped: {result['skipped_count']}\n"
+                        f"{notes}"
+                    ).strip()
+                )
+                import_logger.info(
+                    f"Client timesheet import successful by user {request.user.username}: "
+                    f"Created={result['created_count']}, Updated={result['updated_count']}, "
+                    f"Skipped={result['skipped_count']}"
+                )
+                messages.success(
+                    request,
+                    f"Client timesheet import completed. "
+                    f"Created {result['created_count']}, updated {result['updated_count']}, "
+                    f"skipped {result['skipped_count']} entries."
+                )
+                return render(
+                    request,
+                    'timesheet/import_client_timesheet.html',
+                    {
+                        'form': ClientTimesheetImportForm(),
+                        'result': result,
+                        'client_import_status': result.get('import_status', client_import_status),
+                    }
+                )
+
+            import_logger.error(
+                f"Client timesheet import failed by user {request.user.username}: {result['errors']}"
+            )
+            messages.error(
+                request,
+                f"{result['message']}\n" + "\n".join(result['errors'][:10])
+            )
+            return render(
+                request,
+                'timesheet/import_client_timesheet.html',
+                {
+                    'form': form,
+                    'result': result,
+                    'client_import_status': result.get('import_status', client_import_status),
+                }
+            )
+    else:
+        form = ClientTimesheetImportForm()
+
+    return render(
+        request,
+        'timesheet/import_client_timesheet.html',
+        {'form': form, 'client_import_status': client_import_status}
+    )
 

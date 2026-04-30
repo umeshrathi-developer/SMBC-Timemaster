@@ -100,6 +100,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Client timesheet imports can create entries as DRAFT or SUBMITTED.
+CLIENT_TIMESHEET_IMPORT_STATUS = 'SUBMITTED'
+
 # Login URL
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard'
@@ -125,6 +128,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'umesh.rathi@infobeans.com'
 EMAIL_HOST_PASSWORD = 'tpau ezxt wghj llzw'
 DEFAULT_FROM_EMAIL = 'umesh.rathi@infobeans.com'
+REPORT_EMAIL_RECIPIENTS = ['umesh.rathi@infobeans.com']
 
 # ============ LOGGING CONFIGURATION ============
 LOGGING = {

@@ -295,6 +295,10 @@
                     <a href="{% url 'import_timesheet_data' %}" class="nav-link {% if request.resolver_match.url_name == 'import_timesheet_data' %}active{% endif %}">
                         <i class="bi bi-cloud-upload"></i> Import Infobeans Timesheet
                     </a>
+
+                    <a href="{% url 'import_client_timesheet_entries' %}" class="nav-link {% if request.resolver_match.url_name == 'import_client_timesheet_entries' %}active{% endif %}">
+                        <i class="bi bi-upload"></i> Import Client Timesheet
+                    </a>
                     
                     <a href="{% url 'reset_password' %}" class="nav-link {% if request.resolver_match.url_name == 'reset_password' %}active{% endif %}">
                         <i class="bi bi-lock-reset"></i> Reset Password

@@ -75,6 +75,11 @@
                 <a href="{% url 'compoff_add' %}" class="btn btn-warning btn-sm">
                     <i class="bi bi-calendar-x"></i> Add CompOff
                 </a>
+                {% if is_admin %}
+                <a href="{% url 'import_client_timesheet_entries' %}" class="btn btn-success btn-sm ms-2">
+                    <i class="bi bi-upload"></i> Import Client Timesheet
+                </a>
+                {% endif %}
             </div>
         </div>
     </div>

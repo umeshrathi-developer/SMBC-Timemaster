@@ -344,6 +344,55 @@ class TimesheetImportForm(forms.Form):
         return file
 
 
+class ClientTimesheetImportForm(forms.Form):
+    """Form for importing client timesheet entries from XLSX files."""
+    import_date = forms.DateField(
+        label='Import Month',
+        widget=forms.DateInput(attrs={
+            'class': 'form-control',
+            'type': 'date',
+        }),
+        help_text='Select the month/date this client timesheet is for.'
+    )
+    file = forms.FileField(
+        label='Client Timesheet XLSX File',
+        widget=forms.FileInput(attrs={
+            'class': 'form-control',
+            'accept': '.xlsx',
+        }),
+        help_text='Upload an Excel file where row 1 is skipped, row 2 has Date and employee headers, and row 3 onward has daily hours.'
+    )
+    notes = forms.CharField(
+        label='Notes (Optional)',
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 3,
+            'placeholder': 'Add any notes about this client timesheet import'
+        }),
+        required=False,
+        help_text='Optional notes about this import'
+    )
+    overwrite_drafts = forms.BooleanField(
+        label='Update existing draft entries',
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={
+            'class': 'form-check-input',
+        }),
+        help_text='When checked, matching DRAFT entries are updated. SUBMITTED entries are never overwritten.'
+    )
+
+    def clean_file(self):
+        """Validate file is an Excel file."""
+        file = self.cleaned_data['file']
+        if file:
+            if not file.name.lower().endswith('.xlsx'):
+                raise forms.ValidationError('Please upload a .xlsx file')
+            if file.size > 5 * 1024 * 1024:
+                raise forms.ValidationError('File size must be less than 5MB')
+        return file
+
+
 class TimesheetEntryForm(forms.ModelForm):
     """Form for creating/updating timesheet entries"""
     project = forms.ChoiceField(

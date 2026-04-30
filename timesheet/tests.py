@@ -1,10 +1,17 @@
 from datetime import date, timedelta
+from io import BytesIO
+import glob
+import os
 
 from django.contrib.auth.models import Group, User
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.conf import settings
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from openpyxl import Workbook
 
 from timesheet.forms import TimesheetEntryForm
+from timesheet.utils import import_client_timesheet_entries
 
 from timesheet.models import CompOff, Employee, Holiday, Project, TimesheetEntry
 
@@ -323,3 +330,190 @@ class AccrualSummaryFormattingTests(TestCase):
             response.context['accrual_data'][0]['adjusted_dates'],
             'Worked on 05-Apr-2026, 12-Apr-2026 adjusted against PTO on 07-Apr-2026, 14-Apr-2026'
         )
+
+
+class ClientTimesheetImportTests(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='admin_import',
+            password='testpass123',
+            is_staff=True,
+        )
+        self.project = Project.objects.create(
+            project_id=901,
+            department_name='Risk Tech',
+            project='Risk Tech',
+            project_code=1901,
+            manager='Manager Five',
+        )
+        self.employee = Employee.objects.create(
+            name='Erin',
+            employee_id='E901',
+            email='erin@example.com',
+            project=self.project,
+            location='Indore',
+        )
+        self.second_employee = Employee.objects.create(
+            name='Sam',
+            employee_id='E902',
+            email='sam@example.com',
+            project=self.project,
+            location='Indore',
+        )
+
+    def tearDown(self):
+        for report_path in glob.glob(os.path.join(settings.BASE_DIR, 'import_reports', 'client_timesheet_import_exceptions_*.csv')):
+            try:
+                os.remove(report_path)
+            except OSError:
+                pass
+
+    def _build_workbook_file(self, rows):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(['employee_id', 'date', 'project', 'hours', 'comments', 'status'])
+        for row in rows:
+            worksheet.append(row)
+
+        file_obj = BytesIO()
+        workbook.save(file_obj)
+        workbook.close()
+        file_obj.seek(0)
+        return file_obj
+
+    def _build_matrix_workbook_file(self, rows):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(['Client Timesheet'])
+        worksheet.append(['Date', 'Erin', 'Sam (E902)'])
+        for row in rows:
+            worksheet.append(row)
+
+        file_obj = BytesIO()
+        workbook.save(file_obj)
+        workbook.close()
+        file_obj.seek(0)
+        return file_obj
+
+    def test_import_client_timesheet_entries_creates_entries(self):
+        file_obj = self._build_workbook_file([
+            ['E901', '2026-04-01', 'Risk Tech', 8, 'Feature work', 'DRAFT'],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['created_count'], 1)
+        entry = TimesheetEntry.objects.get(employee=self.employee)
+        self.assertEqual(entry.date, date(2026, 4, 1))
+        self.assertEqual(entry.project, 'Risk Tech')
+        self.assertEqual(entry.hours, 8)
+        self.assertEqual(entry.status, 'SUBMITTED')
+
+    def test_import_client_timesheet_matrix_creates_only_non_zero_configured_status_entries(self):
+        file_obj = self._build_matrix_workbook_file([
+            ['01-Apr-2026', 8, 0],
+            ['02-Apr-2026', None, 6],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['created_count'], 2)
+        self.assertEqual(result['skipped_count'], 2)
+        self.assertEqual(len(result['skipped_records']), 2)
+        self.assertTrue(result['exception_report_path'])
+        self.assertTrue(
+            TimesheetEntry.objects.filter(
+                employee=self.employee,
+                date=date(2026, 4, 1),
+                hours=8,
+                status='SUBMITTED',
+            ).exists()
+        )
+        self.assertTrue(
+            TimesheetEntry.objects.filter(
+                employee=self.second_employee,
+                date=date(2026, 4, 2),
+                hours=6,
+                status='SUBMITTED',
+            ).exists()
+        )
+        self.assertFalse(
+            TimesheetEntry.objects.filter(
+                employee=self.second_employee,
+                date=date(2026, 4, 1),
+            ).exists()
+        )
+
+    @override_settings(CLIENT_TIMESHEET_IMPORT_STATUS='DRAFT')
+    def test_import_client_timesheet_status_can_be_configured(self):
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-01', 8, 0],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['import_status'], 'DRAFT')
+        self.assertTrue(
+            TimesheetEntry.objects.filter(
+                employee=self.employee,
+                date=date(2026, 4, 1),
+                status='DRAFT',
+            ).exists()
+        )
+
+    def test_import_client_timesheet_view_is_admin_only(self):
+        user = User.objects.create_user(username='regular', password='testpass123')
+        self.client.login(username='regular', password='testpass123')
+
+        response = self.client.get(reverse('import_client_timesheet_entries'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(TimesheetEntry.objects.exists())
+
+    def test_import_client_timesheet_reports_failed_and_skipped_records(self):
+        file_obj = BytesIO()
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(['Client Timesheet'])
+        worksheet.append(['Date', 'Erin', 'Missing Employee'])
+        worksheet.append(['2026-04-01', 14, 5])
+        workbook.save(file_obj)
+        workbook.close()
+        file_obj.seek(0)
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(len(result['failed_records']), 2)
+        self.assertIn('Active employee not found', result['failed_records'][0]['reason'])
+        self.assertIn('Hours must be between 0 and 12', result['failed_records'][1]['reason'])
+        self.assertTrue(result['exception_report_path'])
+        self.assertTrue(os.path.exists(os.path.join(settings.BASE_DIR, result['exception_report_path'])))
+
+    def test_import_client_timesheet_view_accepts_xlsx_upload(self):
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-01', 8, 0],
+        ])
+        upload = SimpleUploadedFile(
+            'client_timesheet.xlsx',
+            file_obj.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        self.client.login(username='admin_import', password='testpass123')
+        response = self.client.post(
+            reverse('import_client_timesheet_entries'),
+            {
+                'file': upload,
+                'import_date': '2026-04-30',
+                'notes': 'April client import',
+                'overwrite_drafts': 'on',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('result', response.context)
+        self.assertTrue(TimesheetEntry.objects.filter(employee=self.employee).exists())

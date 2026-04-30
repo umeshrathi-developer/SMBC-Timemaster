@@ -1,0 +1,257 @@
+{% extends 'base.html' %}
+
+{% block title %}Import Client Timesheet - Timesheet Comp-Off & Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="page-title mb-0">
+                <i class="bi bi-cloud-upload"></i> Import Client Timesheet
+            </h1>
+            <a href="{% url 'timesheet_entry_list' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back
+            </a>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">Upload Excel File</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        {% for error in form.non_field_errors %}
+                        <div>{{ error }}</div>
+                        {% endfor %}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-4">
+                        <label for="{{ form.file.id_for_label }}" class="form-label">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Excel File
+                            <span class="text-danger">*</span>
+                        </label>
+                        {{ form.file }}
+                        {% if form.file.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.file.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="{{ form.import_date.id_for_label }}" class="form-label">
+                            <i class="bi bi-calendar3"></i> Import Month
+                            <span class="text-danger">*</span>
+                        </label>
+                        {{ form.import_date }}
+                        {% if form.import_date.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.import_date.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="{{ form.notes.id_for_label }}" class="form-label">
+                            <i class="bi bi-chat-left-text"></i> Notes (Optional)
+                        </label>
+                        {{ form.notes }}
+                        {% if form.notes.errors %}
+                        <div class="text-danger small mt-1">
+                            {% for error in form.notes.errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="form-check mb-4">
+                        {{ form.overwrite_drafts }}
+                        <label class="form-check-label" for="{{ form.overwrite_drafts.id_for_label }}">
+                            {{ form.overwrite_drafts.label }}
+                        </label>
+                        <small class="text-muted d-block mt-1">{{ form.overwrite_drafts.help_text }}</small>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="bi bi-cloud-upload"></i> Import Client Timesheet
+                        </button>
+                        <a href="{% url 'timesheet_entry_list' %}" class="btn btn-secondary btn-lg">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if result %}
+        <div class="card mt-4">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-clipboard-data"></i> Import Result
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">Created</div>
+                            <strong>{{ result.created_count }}</strong>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">Updated</div>
+                            <strong>{{ result.updated_count }}</strong>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">Skipped</div>
+                            <strong>{{ result.skipped_count }}</strong>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">Failed</div>
+                            <strong>{{ result.failed_records|length }}</strong>
+                        </div>
+                    </div>
+                </div>
+
+                {% if result.exception_report_path %}
+                <div class="alert alert-info">
+                    <i class="bi bi-filetype-csv"></i>
+                    Skipped/failed details were also written to
+                    <code>{{ result.exception_report_path }}</code>.
+                </div>
+                {% endif %}
+
+                {% if result.failed_records %}
+                <h6 class="fw-bold mt-3">Failed Records</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Row</th>
+                                <th>Column</th>
+                                <th>Employee Header</th>
+                                <th>Employee</th>
+                                <th>Date</th>
+                                <th>Hours</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in result.failed_records %}
+                            <tr>
+                                <td>{{ record.row }}</td>
+                                <td>{{ record.column }}</td>
+                                <td>{{ record.employee_header }}</td>
+                                <td>{{ record.employee }}</td>
+                                <td>{{ record.date }}</td>
+                                <td>{{ record.hours }}</td>
+                                <td>{{ record.reason }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+
+                {% if result.skipped_records %}
+                <h6 class="fw-bold mt-3">Skipped Records</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Row</th>
+                                <th>Column</th>
+                                <th>Employee Header</th>
+                                <th>Employee</th>
+                                <th>Date</th>
+                                <th>Hours</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in result.skipped_records %}
+                            <tr>
+                                <td>{{ record.row }}</td>
+                                <td>{{ record.column }}</td>
+                                <td>{{ record.employee_header }}</td>
+                                <td>{{ record.employee }}</td>
+                                <td>{{ record.date }}</td>
+                                <td>{{ record.hours }}</td>
+                                <td>{{ record.reason }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+
+                {% if not result.failed_records and not result.skipped_records %}
+                <p class="text-muted mb-0">No skipped or failed records were found.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card mt-4">
+            <div class="card-header bg-light">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-table"></i> XLSX Format
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th colspan="4">Client Timesheet - April 2026</th>
+                            </tr>
+                            <tr>
+                                <th>Date</th>
+                                <th>Erin</th>
+                                <th>Alex (E902)</th>
+                                <th>sam@example.com</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>2026-04-01</td>
+                                <td>8</td>
+                                <td>0</td>
+                                <td>6</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <ul class="small mb-0">
+                    <li>Row 1 is skipped.</li>
+                    <li>Row 2 must contain one <strong>Date</strong> column and one column per employee.</li>
+                    <li>Row 3 onward contains the daily date and employee hour cells.</li>
+                    <li>Employee headers can be employee name, employee ID, or <strong>Name (Employee ID)</strong>.</li>
+                    <li><strong>Date</strong> supports YYYY-MM-DD, DD-MMM-YYYY, DD-MM-YYYY, DD/MM/YYYY, or Excel date cells.</li>
+                    <li>Blank cells and zero values are skipped. Values greater than zero create or update entries in <strong>{{ client_import_status }}</strong>.</li>
+                    <li>The employee's assigned project is used for the timesheet entry.</li>
+                    <li>Existing SUBMITTED entries are skipped to avoid changing approved timesheets.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
