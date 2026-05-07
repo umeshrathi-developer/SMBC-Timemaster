@@ -108,6 +108,11 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'login'
 
+# Session timeout: expire users after 8 hours of inactivity.
+SESSION_COOKIE_AGE = 8 * 60 * 60
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
 # Email configuration
 # For development, use console backend to print emails to console instead of sending
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
