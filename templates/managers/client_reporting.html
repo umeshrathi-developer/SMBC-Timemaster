@@ -66,15 +66,26 @@
             <div class="col-md-4">
                 <strong>Total Employees:</strong> {{ employees|length }}
             </div>
-            <div class="col-md-4 text-end">
+            <div class="col-md-4">
                 {% if report_rows %}
-                <form method="post" class="d-inline" id="emailReportForm" onsubmit="return confirmEmailReport()">
+                <form method="post" class="d-flex gap-2 mb-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="test_email_report">
+                    <input type="hidden" name="manager" value="{{ selected_manager }}">
+                    <input type="hidden" name="start_date" value="{{ start_date }}">
+                    <input type="hidden" name="end_date" value="{{ end_date }}">
+                    <input type="email" name="test_email" class="form-control" placeholder="test@example.com" required>
+                    <button type="submit" class="btn btn-outline-success text-nowrap">
+                        <i class="bi bi-envelope-check"></i> Test Email Report
+                    </button>
+                </form>
+                <form method="post" class="text-end" id="emailReportForm" onsubmit="return confirmEmailReport()">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="email_report">
                     <input type="hidden" name="manager" value="{{ selected_manager }}">
                     <input type="hidden" name="start_date" value="{{ start_date }}">
                     <input type="hidden" name="end_date" value="{{ end_date }}">
-                    <button type="submit" class="btn btn-success">
+                    <button type="submit" class="btn btn-success w-100">
                         <i class="bi bi-envelope"></i> Email Client Report
                     </button>
                 </form>

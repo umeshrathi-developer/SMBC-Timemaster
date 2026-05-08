@@ -9,6 +9,8 @@ class Project(models.Model):
     project = models.CharField(max_length=100)
     project_code = models.IntegerField()
     manager = models.CharField(max_length=100, blank=True)
+    to_email = models.TextField(blank=True, help_text='Semicolon-separated To email addresses')
+    cc_email = models.TextField(blank=True, help_text='Semicolon-separated CC email addresses')
     created_date = models.DateTimeField(auto_now_add=True)
     updated_date = models.DateTimeField(auto_now=True)
 

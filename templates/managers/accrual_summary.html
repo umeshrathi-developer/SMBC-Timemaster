@@ -63,8 +63,23 @@
 <div class="card mb-4">
     <div class="card-body">
         <div class="row">
-            <div class="col-md-12 text-end">
-                <form method="post" class="d-inline" id="emailReportForm" onsubmit="return confirmEmailReport()">
+            <div class="col-md-12">
+                <form method="post" class="row gy-2 gx-2 justify-content-end align-items-center mb-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="test_email_report">
+                    <input type="hidden" name="manager" value="{{ selected_manager }}">
+                    <input type="hidden" name="start_date" value="{{ start_date }}">
+                    <input type="hidden" name="end_date" value="{{ end_date }}">
+                    <div class="col-md-4">
+                        <input type="email" name="test_email" class="form-control" placeholder="test@example.com" required>
+                    </div>
+                    <div class="col-md-auto">
+                        <button type="submit" class="btn btn-outline-success w-100">
+                            <i class="bi bi-envelope-check"></i> Test Email Report
+                        </button>
+                    </div>
+                </form>
+                <form method="post" class="text-end" id="emailReportForm" onsubmit="return confirmEmailReport()">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="email_report">
                     <input type="hidden" name="manager" value="{{ selected_manager }}">

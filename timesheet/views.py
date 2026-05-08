@@ -2,14 +2,17 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
-from django.db.models import Count, Q, Sum
+from django.db.models import Q, Sum
 from django.views.decorators.http import require_http_methods
 from django.http import JsonResponse
 from django.utils.crypto import get_random_string
 from django.urls import reverse
 from django.conf import settings
 from django.core.mail import EmailMessage
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.template.loader import render_to_string
+from calendar import monthrange
 from datetime import datetime, date, timedelta
 import logging
 import threading
@@ -73,10 +76,10 @@ def deny_employee_feature_access(request, view_name):
     return redirect('dashboard')
 
 
-def send_html_email_async(subject, html_message, from_email, recipients, success_log_message, failure_log_message):
+def send_html_email_async(subject, html_message, from_email, recipients, success_log_message, failure_log_message, cc=None):
     """Send an HTML email in a background thread."""
     def _send():
-        email_message = EmailMessage(subject, html_message, from_email, recipients)
+        email_message = EmailMessage(subject, html_message, from_email, recipients, cc=cc or [])
         email_message.content_subtype = 'html'
         try:
             email_message.send(fail_silently=False)
@@ -88,17 +91,103 @@ def send_html_email_async(subject, html_message, from_email, recipients, success
     threading.Thread(target=_send, daemon=True).start()
 
 
-def get_report_email_recipients():
-    """Return configured report recipients as a clean list of email strings."""
-    recipients = getattr(settings, 'REPORT_EMAIL_RECIPIENTS', [])
-    if isinstance(recipients, str):
-        recipients = recipients.split(',')
+def parse_semicolon_emails(value):
+    """Parse semicolon-separated email addresses, preserving order and uniqueness."""
+    emails = []
+    seen = set()
+    for email in str(value or '').split(';'):
+        email = email.strip()
+        normalized_email = email.lower()
+        if email and normalized_email not in seen:
+            emails.append(email)
+            seen.add(normalized_email)
+    return emails
 
-    return [
-        str(recipient).strip()
-        for recipient in recipients
-        if str(recipient).strip()
+
+def get_validated_test_email_recipients(value):
+    """Return validated test email recipients from the report textbox."""
+    recipients = parse_semicolon_emails(value)
+    if not recipients:
+        raise ValidationError('Please enter a test email address.')
+
+    for recipient in recipients:
+        validate_email(recipient)
+
+    return recipients
+
+
+def get_project_email_recipients(employees):
+    """Return To and CC recipients from projects assigned to the report employees."""
+    project_ids = [
+        project_id for project_id in employees.values_list('project_id', flat=True).distinct()
+        if project_id
     ]
+    to_recipients = []
+    cc_recipients = []
+    to_seen = set()
+    cc_seen = set()
+
+    for project in Project.objects.filter(project_id__in=project_ids).order_by('project_id'):
+        for email in parse_semicolon_emails(project.to_email):
+            normalized_email = email.lower()
+            if normalized_email not in to_seen:
+                to_recipients.append(email)
+                to_seen.add(normalized_email)
+
+        for email in parse_semicolon_emails(project.cc_email):
+            normalized_email = email.lower()
+            if normalized_email not in to_seen and normalized_email not in cc_seen:
+                cc_recipients.append(email)
+                cc_seen.add(normalized_email)
+
+    return to_recipients, cc_recipients
+
+
+def get_default_from_email():
+    """Return the configured sender for report emails."""
+    return getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'SERVER_EMAIL', 'noreply@example.com')
+
+
+def queue_report_email(
+    request, action, employees, subject, template_name, email_context,
+    report_name, failure_log_message
+):
+    """Queue a production or test report email and add user-facing messages."""
+    is_test_email = action == 'test_email_report'
+    try:
+        if is_test_email:
+            recipients = get_validated_test_email_recipients(request.POST.get('test_email', ''))
+            cc_recipients = []
+        else:
+            recipients, cc_recipients = get_project_email_recipients(employees)
+    except ValidationError as exc:
+        messages.error(request, '; '.join(exc.messages))
+        return False
+
+    if not recipients:
+        messages.error(request, 'No To email recipients found in the selected project records.')
+        return False
+
+    subject_prefix = '[TEST] ' if is_test_email else ''
+    html_message = render_to_string(template_name, email_context)
+    send_html_email_async(
+        f'{subject_prefix}{subject}',
+        html_message,
+        get_default_from_email(),
+        recipients,
+        f"{report_name} emailed successfully to {len(recipients)} To and {len(cc_recipients)} CC recipients by user: {request.user.username}",
+        failure_log_message,
+        cc=cc_recipients
+    )
+
+    if is_test_email:
+        messages.success(request, f'Test {report_name.lower()} email has been queued and will be sent shortly.')
+    else:
+        messages.success(request, f'{report_name} email has been queued and will be sent shortly.')
+
+    if 'console' in settings.EMAIL_BACKEND:
+        messages.info(request, 'Email sending was queued for the console backend (development mode).')
+    return True
 
 
 def get_location_holiday_filter(location):
@@ -175,9 +264,6 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
         employee: Employee instance
         selected_date: Date object representing the month (e.g., date(2026, 3, 1))
     """
-    from datetime import date
-    from calendar import monthrange
-    
     # Get all days in the month
     days_in_month = monthrange(selected_date.year, selected_date.month)[1]
     month_start = date(selected_date.year, selected_date.month, 1)
@@ -703,7 +789,6 @@ def client_reporting(request):
     accrual_pending_hours_list = []
     accrual_days_list = []
     accrual_adjusted_list = []
-    selected_manager_email = None
 
     if selected_manager:
         employees = Employee.objects.filter(project__manager=selected_manager, is_active=True).select_related('project').order_by('name')
@@ -784,7 +869,7 @@ def client_reporting(request):
                             if date_type:
                                 display_hours = ''
                             elif took_compoff:
-                                display_hours = compoff_hours_map.get((employee.id, current_date), '')
+                                display_hours = float(compoff_hours_map.get((employee.id, current_date), ''))
                             else:
                                 display_hours = submitted_hours if submitted_hours is not None else ''
 
@@ -837,7 +922,7 @@ def client_reporting(request):
 
     if request.method == 'POST':
         action = request.POST.get('action')
-        if action == 'email_report':
+        if action in ('email_report', 'test_email_report'):
             if not selected_manager or not start_date_input or not end_date_input:
                 messages.error(request, 'Please select a manager and date range before emailing the report.')
             elif not employees:
@@ -845,12 +930,13 @@ def client_reporting(request):
             elif not report_rows:
                 messages.error(request, 'Report has no rows. Please check the date range.')
             else:
-                recipients = get_report_email_recipients()
-                if not recipients:
-                    messages.error(request, 'No valid email recipients found for the selected manager or employees.')
-                else:
-                    subject = f'Timesheet Report - {selected_manager} ({start_date_input} to {end_date_input})'
-                    email_context = {
+                queue_report_email(
+                    request,
+                    action,
+                    employees,
+                    f'Timesheet Report - {selected_manager} ({start_date_input} to {end_date_input})',
+                    'managers/client_reporting_email.html',
+                    {
                         'approver_manager': selected_manager,
                         'employees': employees,
                         'report_rows': report_rows,
@@ -861,20 +947,10 @@ def client_reporting(request):
                         'accrual_adjusted_list': accrual_adjusted_list,
                         'start_date': start_date_input,
                         'end_date': end_date_input,
-                    }
-                    html_message = render_to_string('managers/client_reporting_email.html', email_context)
-                    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'SERVER_EMAIL', 'noreply@example.com')
-                    send_html_email_async(
-                        subject,
-                        html_message,
-                        from_email,
-                        recipients,
-                        f"Timesheet report emailed successfully to {len(recipients)} recipients by user: {request.user.username}",
-                        f"Failed to send timesheet email for user {request.user.username}"
-                    )
-                    messages.success(request, 'Timesheet report email has been queued and will be sent shortly.')
-                    if 'console' in settings.EMAIL_BACKEND:
-                        messages.info(request, 'Email sending was queued for the console backend (development mode).')
+                    },
+                    'Timesheet report',
+                    f"Failed to send timesheet email for user {request.user.username}"
+                )
 
     context = {
         'managers': managers,
@@ -976,7 +1052,7 @@ def accrual_summary(request):
 
     if request.method == 'POST':
         action = request.POST.get('action')
-        if action == 'email_report':
+        if action in ('email_report', 'test_email_report'):
             if not selected_manager or not start_date_input or not end_date_input:
                 messages.error(request, 'Please select a manager and date range before emailing the report.')
             elif not employees:
@@ -984,30 +1060,21 @@ def accrual_summary(request):
             elif not accrual_data:
                 messages.error(request, 'No accrual data available. Please check the date range.')
             else:
-                recipients = get_report_email_recipients()
-                if not recipients:
-                    messages.error(request, 'No valid email recipients found for the selected manager or employees.')
-                else:
-                    subject = f'Accrual Summary Report - {selected_manager} ({start_date_input} to {end_date_input})'
-                    email_context = {
+                queue_report_email(
+                    request,
+                    action,
+                    employees,
+                    f'Accrual Summary Report - {selected_manager} ({start_date_input} to {end_date_input})',
+                    'managers/accrual_summary_email.html',
+                    {
                         'manager_name': selected_manager,
                         'accrual_data': accrual_data,
                         'start_date': start_date_input,
                         'end_date': end_date_input,
-                    }
-                    html_message = render_to_string('managers/accrual_summary_email.html', email_context)
-                    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'SERVER_EMAIL', 'noreply@example.com')
-                    send_html_email_async(
-                        subject,
-                        html_message,
-                        from_email,
-                        recipients,
-                        f"Accrual summary report emailed successfully to {len(recipients)} recipients by user: {request.user.username}",
-                        f"Failed to send accrual summary email for user {request.user.username}"
-                    )
-                    messages.success(request, 'Accrual summary report email has been queued and will be sent shortly.')
-                    if 'console' in settings.EMAIL_BACKEND:
-                        messages.info(request, 'Email sending was queued for the console backend (development mode).')
+                    },
+                    'Accrual summary report',
+                    f"Failed to send accrual summary email for user {request.user.username}"
+                )
 
     context = {
         'managers': managers,
@@ -1237,7 +1304,6 @@ def timesheet_entry_list(request):
         return deny_employee_feature_access(request, 'timesheet_entry_list')
 
     # Get selected month/year from request, default to current month
-    from datetime import datetime, date
     selected_month = request.GET.get('month', '')
     
     if selected_month:
@@ -1279,7 +1345,6 @@ def timesheet_entry_list(request):
 
     if employee:
         # Get all entries for this month
-        from calendar import monthrange
         days_in_month = monthrange(selected_date.year, selected_date.month)[1]
         month_end = date(selected_date.year, selected_date.month, days_in_month)
         
@@ -1385,7 +1450,6 @@ def timesheet_entry_add(request):
             return redirect('dashboard')
     
     # Get the month parameter from query string
-    from datetime import date
     selected_month = request.GET.get('month', '')
     
     if request.method == 'POST':
@@ -1451,7 +1515,6 @@ def timesheet_entry_edit(request, pk):
         return redirect('timesheet_entry_list')
     
     # Get the month parameter from query string
-    from datetime import date
     selected_month = request.GET.get('month', '')
     
     if request.method == 'POST':
@@ -1564,8 +1627,6 @@ def timesheet_entry_submit(request):
     
     try:
         year, month = map(int, selected_month.split('-'))
-        from datetime import date
-        from calendar import monthrange
         selected_date = date(year, month, 1)
         days_in_month = monthrange(year, month)[1]
         month_end = date(year, month, days_in_month)

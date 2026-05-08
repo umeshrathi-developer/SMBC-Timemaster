@@ -350,13 +350,16 @@ class EmployeeAdmin(admin.ModelAdmin):
 
 class ProjectAdmin(admin.ModelAdmin):
     """Admin for Project"""
-    list_display = ['project_id', 'project', 'department_name', 'project_code', 'manager']
+    list_display = ['project_id', 'project', 'department_name', 'project_code', 'manager', 'to_email', 'cc_email']
     list_filter = ['department_name', 'project', 'created_date']
-    search_fields = ['project', 'department_name', 'manager']
+    search_fields = ['project', 'department_name', 'manager', 'to_email', 'cc_email']
     readonly_fields = ['created_date', 'updated_date']
     fieldsets = (
         ('Project Information', {
             'fields': ('project_id', 'project', 'department_name', 'project_code', 'manager')
+        }),
+        ('Email Recipients', {
+            'fields': ('to_email', 'cc_email')
         }),
         ('Timestamps', {
             'fields': ('created_date', 'updated_date'),

@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from io import BytesIO
 import glob
 import os
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -381,6 +382,63 @@ class ClientReportingRulesTests(TestCase):
         self.assertTrue(response.context['report_rows'][0]['compoff_taken'][0])
         self.assertEqual(response.context['employee_totals'][0], 10.0)
 
+    def test_client_reporting_email_uses_project_to_and_cc_recipients(self):
+        self.project.to_email = 'client.to@example.com; sponsor@example.com'
+        self.project.cc_email = 'client.cc@example.com; sponsor@example.com'
+        self.project.save()
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 6),
+            project='Risk Tech',
+            hours=8,
+            status='SUBMITTED',
+        )
+
+        self.client.login(username='admin', password='testpass123')
+        with patch('timesheet.views.send_html_email_async') as mock_send:
+            response = self.client.post(
+                reverse('client_reporting'),
+                {
+                    'action': 'email_report',
+                    'manager': 'Manager Three',
+                    'start_date': '2026-04-06',
+                    'end_date': '2026-04-06',
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
+        self.assertEqual(mock_send.call_args.args[3], ['client.to@example.com', 'sponsor@example.com'])
+        self.assertEqual(mock_send.call_args.kwargs['cc'], ['client.cc@example.com'])
+
+    def test_client_reporting_test_email_uses_entered_recipient_only(self):
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 6),
+            project='Risk Tech',
+            hours=8,
+            status='SUBMITTED',
+        )
+
+        self.client.login(username='admin', password='testpass123')
+        with patch('timesheet.views.send_html_email_async') as mock_send:
+            response = self.client.post(
+                reverse('client_reporting'),
+                {
+                    'action': 'test_email_report',
+                    'manager': 'Manager Three',
+                    'start_date': '2026-04-06',
+                    'end_date': '2026-04-06',
+                    'test_email': 'reviewer@example.com',
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
+        self.assertTrue(mock_send.call_args.args[0].startswith('[TEST] '))
+        self.assertEqual(mock_send.call_args.args[3], ['reviewer@example.com'])
+        self.assertEqual(mock_send.call_args.kwargs['cc'], [])
+
 
 class AccrualSummaryFormattingTests(TestCase):
     def setUp(self):
@@ -433,6 +491,48 @@ class AccrualSummaryFormattingTests(TestCase):
             response.context['accrual_data'][0]['adjusted_dates'],
             'Worked on 05-Apr-2026, 12-Apr-2026 adjusted against PTO on 07-Apr-2026, 14-Apr-2026'
         )
+
+    def test_accrual_summary_email_uses_project_to_and_cc_recipients(self):
+        self.project.to_email = 'accrual.to@example.com'
+        self.project.cc_email = 'accrual.cc@example.com'
+        self.project.save()
+
+        self.client.login(username='admin_accrual', password='testpass123')
+        with patch('timesheet.views.send_html_email_async') as mock_send:
+            response = self.client.post(
+                reverse('accrual_summary'),
+                {
+                    'action': 'email_report',
+                    'manager': 'Manager Four',
+                    'start_date': '2026-04-01',
+                    'end_date': '2026-04-30',
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
+        self.assertEqual(mock_send.call_args.args[3], ['accrual.to@example.com'])
+        self.assertEqual(mock_send.call_args.kwargs['cc'], ['accrual.cc@example.com'])
+
+    def test_accrual_summary_test_email_uses_entered_recipient_only(self):
+        self.client.login(username='admin_accrual', password='testpass123')
+        with patch('timesheet.views.send_html_email_async') as mock_send:
+            response = self.client.post(
+                reverse('accrual_summary'),
+                {
+                    'action': 'test_email_report',
+                    'manager': 'Manager Four',
+                    'start_date': '2026-04-01',
+                    'end_date': '2026-04-30',
+                    'test_email': 'reviewer@example.com',
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
+        self.assertTrue(mock_send.call_args.args[0].startswith('[TEST] '))
+        self.assertEqual(mock_send.call_args.args[3], ['reviewer@example.com'])
+        self.assertEqual(mock_send.call_args.kwargs['cc'], [])
 
 
 class ClientTimesheetImportTests(TestCase):

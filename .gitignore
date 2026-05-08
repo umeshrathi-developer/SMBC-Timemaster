@@ -46,3 +46,5 @@ htmlcov/
 coverage.xml
 *.log
 node_modules/
+.env.example
+.env*
