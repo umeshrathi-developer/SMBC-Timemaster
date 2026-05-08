@@ -5,6 +5,15 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+DEFAULT_LOCATIONS = ['Pune', 'Chennai', 'Indore']
+
+
+def seed_default_locations(apps, schema_editor):
+    Location = apps.get_model('timesheet', 'Location')
+    for location_name in DEFAULT_LOCATIONS:
+        Location.objects.get_or_create(name=location_name)
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -122,6 +131,8 @@ class Migration(migrations.Migration):
                 ('project', models.CharField(max_length=100)),
                 ('project_code', models.IntegerField()),
                 ('manager', models.CharField(blank=True, max_length=100)),
+                ('to_email', models.TextField(blank=True, help_text='Semicolon-separated To email addresses')),
+                ('cc_email', models.TextField(blank=True, help_text='Semicolon-separated CC email addresses')),
                 ('created_date', models.DateTimeField(auto_now_add=True)),
                 ('updated_date', models.DateTimeField(auto_now=True)),
             ],
@@ -133,16 +144,32 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
+            name='Location',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('name', models.CharField(max_length=100, unique=True)),
+                ('created_date', models.DateTimeField(auto_now_add=True)),
+                ('updated_date', models.DateTimeField(auto_now=True)),
+            ],
+            options={
+                'verbose_name': 'Location',
+                'verbose_name_plural': 'Locations',
+                'ordering': ['name'],
+                'indexes': [models.Index(fields=['name'], name='timesheet_l_name_b53e0a_idx')],
+            },
+        ),
+        migrations.RunPython(seed_default_locations, migrations.RunPython.noop),
+        migrations.CreateModel(
             name='Employee',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=100)),
                 ('employee_id', models.CharField(max_length=50, unique=True)),
                 ('email', models.EmailField(blank=True, max_length=100)),
-                ('location', models.CharField(blank=True, default='', max_length=100)),
                 ('is_active', models.BooleanField(default=True)),
                 ('created_date', models.DateTimeField(auto_now_add=True)),
                 ('updated_date', models.DateTimeField(auto_now=True)),
+                ('location', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='timesheet.location')),
                 ('project', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='timesheet.project')),
                 ('user', models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
             ],
