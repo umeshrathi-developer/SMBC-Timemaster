@@ -1,0 +1,53 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}Import Employees - Admin{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <div class="module">
+        <h2>Upload Employee Excel File</h2>
+
+        <form method="post" enctype="multipart/form-data" class="form-horizontal">
+            {% csrf_token %}
+
+            <div class="form-row">
+                <div class="fieldBox">
+                    <label for="id_file">{{ form.file.label }}</label>
+                    {{ form.file }}
+                    {% if form.file.help_text %}
+                    <p class="help">{{ form.file.help_text|safe }}</p>
+                    {% endif %}
+                    {% if form.file.errors %}
+                    <ul class="errorlist">{{ form.file.errors }}</ul>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="submit-row">
+                <button type="submit" class="default">Import File</button>
+                <a href="{% url 'admin:timesheet_employee_changelist' %}" class="button">Cancel</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="module" style="margin-top: 20px;">
+        <h2>Expected Columns</h2>
+        <ul>
+            <li>name</li>
+            <li>employee_id</li>
+            <li>email</li>
+            <li>project</li>
+            <li>location</li>
+            <li>is_active</li>
+        </ul>
+        <p>Import behavior:</p>
+        <ul>
+            <li>Employees are created or updated by <strong>employee_id</strong>.</li>
+            <li>Missing projects are created automatically.</li>
+            <li>New employees get a linked user with username <strong>firstname.lastname</strong>.</li>
+            <li>The initial password is the same as the generated username.</li>
+            <li><strong>is_active</strong> accepts TRUE/FALSE, YES/NO, 1/0, Active/Inactive.</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

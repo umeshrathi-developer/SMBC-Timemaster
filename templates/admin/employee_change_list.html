@@ -1,0 +1,11 @@
+{% extends "admin/change_list.html" %}
+{% load admin_urls static %}
+
+{% block search %}
+    <div id="toolbar">
+        <a href="{% url 'admin:timesheet_employee_import' %}" class="button" style="background-color: #417690; margin-right: 10px;">
+            Import Employees
+        </a>
+        {{ block.super }}
+    </div>
+{% endblock %}
