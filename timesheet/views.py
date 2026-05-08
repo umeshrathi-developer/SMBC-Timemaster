@@ -58,6 +58,12 @@ def get_employee_project_choices(employee):
     return []
 
 
+def get_employee_location_name(employee):
+    """Return the employee's location name for text-based holiday applicability."""
+    location = getattr(employee, 'location', None)
+    return getattr(location, 'name', location) or ''
+
+
 def deny_employee_feature_access(request, view_name):
     """Redirect users who are not allowed to access employee features."""
     access_logger.warning(
@@ -97,6 +103,7 @@ def get_report_email_recipients():
 
 def get_location_holiday_filter(location):
     """Return a holiday filter for the given location, including global holidays."""
+    location = getattr(location, 'name', location) or ''
     if location:
         return Q(location=location) | Q(location='')
     return Q()
@@ -117,7 +124,7 @@ def is_holiday_date(date_obj, employee=None, exclude_special=False):
     holiday_filters = Q(
         date=date_obj,
         holiday_type__in=holiday_types
-    ) & get_location_holiday_filter(getattr(employee, 'location', ''))
+    ) & get_location_holiday_filter(get_employee_location_name(employee))
 
     return Holiday.objects.filter(holiday_filters).exists()
 
@@ -134,7 +141,7 @@ def is_weekend_or_fixed_holiday(date_obj, employee=None):
     holiday_filters = Q(
         date=date_obj,
         holiday_type='PUBLIC_HOLIDAY'
-    ) & get_location_holiday_filter(getattr(employee, 'location', ''))
+    ) & get_location_holiday_filter(get_employee_location_name(employee))
 
     return Holiday.objects.filter(holiday_filters).exists()
 
@@ -149,7 +156,7 @@ def get_date_type(date_obj, employee=None):
     """
     if date_obj.weekday() >= 5:
         return 'Weekend'
-    holiday_filters = Q(date=date_obj) & get_location_holiday_filter(getattr(employee, 'location', ''))
+    holiday_filters = Q(date=date_obj) & get_location_holiday_filter(get_employee_location_name(employee))
     holiday = Holiday.objects.filter(holiday_filters).first()
     if holiday:
         return holiday.get_holiday_type_display()
@@ -444,7 +451,7 @@ def employee_list(request):
             Q(project__project__icontains=search_query) |
             Q(project__department_name__icontains=search_query) |
             Q(project__manager__icontains=search_query) |
-            Q(location__icontains=search_query)
+            Q(location__name__icontains=search_query)
         )
     
     context = {
@@ -1757,7 +1764,7 @@ def generate_timesheet_weekdays(request):
             holiday_filters = Q(
                 date=current,
                 holiday_type__in=['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY']
-            ) & get_location_holiday_filter(getattr(employee, 'location', ''))
+            ) & get_location_holiday_filter(get_employee_location_name(employee))
             is_blocked_holiday = Holiday.objects.filter(holiday_filters).exists()
             
             if not is_blocked_holiday:

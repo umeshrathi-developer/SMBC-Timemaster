@@ -4,9 +4,9 @@ from django.shortcuts import render, redirect
 from django.urls import path
 from django.contrib import messages
 import logging
-from .models import Project, Employee, Holiday, CompOff, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
+from .models import Project, Location, Employee, Holiday, CompOff, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
 from .forms import TimesheetImportForm
-from .utils import import_holiday_file
+from .utils import import_employee_file, import_holiday_file
 
 logger = logging.getLogger('timesheet')
 import_logger = logging.getLogger('timesheet.import')
@@ -163,6 +163,24 @@ class HolidayImportForm(forms.Form):
         return file
 
 
+class EmployeeImportForm(forms.Form):
+    """Form for importing employees from Excel."""
+    file = forms.FileField(
+        label='Employee Excel File',
+        widget=forms.FileInput(attrs={
+            'class': 'form-control',
+            'accept': '.xlsx,.xlsm',
+        }),
+        help_text='Upload an Excel file with columns: name, employee_id, email, project, location, is_active'
+    )
+
+    def clean_file(self):
+        file = self.cleaned_data['file']
+        if file and not file.name.lower().endswith(('.xlsx', '.xlsm')):
+            raise forms.ValidationError('Please upload an Excel file in .xlsx or .xlsm format.')
+        return file
+
+
 class HolidayAdmin(admin.ModelAdmin):
     """Custom admin for Holiday model"""
     form = HolidayAdminForm
@@ -264,9 +282,10 @@ class TimesheetEntryAdmin(admin.ModelAdmin):
 
 class EmployeeAdmin(admin.ModelAdmin):
     """Admin for Employee"""
+    change_list_template = 'admin/employee_change_list.html'
     list_display = ['name', 'employee_id', 'email', 'project', 'location', 'is_active']
     list_filter = ['is_active', 'project', 'location', 'created_date']
-    search_fields = ['name', 'employee_id', 'email', 'project__project', 'project__manager', 'location']
+    search_fields = ['name', 'employee_id', 'email', 'project__project', 'project__manager', 'location__name']
     readonly_fields = ['created_date', 'updated_date']
     fieldsets = (
         ('Basic Information', {
@@ -283,6 +302,50 @@ class EmployeeAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'import/',
+                self.admin_site.admin_view(self.import_view),
+                name='timesheet_employee_import',
+            ),
+        ]
+        return custom_urls + urls
+
+    def import_view(self, request):
+        """Import employees from an Excel file."""
+        if request.method == 'POST':
+            form = EmployeeImportForm(request.POST, request.FILES)
+            if form.is_valid():
+                result = import_employee_file(form.cleaned_data['file'])
+                if result['success']:
+                    import_logger.info(
+                        f"Employee import completed by user {request.user.username}. "
+                        f"Created={result['created_count']}, Updated={result['updated_count']}, "
+                        f"UsersCreated={result['user_created_count']}, ProjectsCreated={result['project_created_count']}"
+                    )
+                    messages.success(
+                        request,
+                        f"Employee import completed. Created {result['created_count']}, "
+                        f"updated {result['updated_count']}, created {result['user_created_count']} users, "
+                        f"and created {result['project_created_count']} projects."
+                    )
+                    return redirect('admin:timesheet_employee_changelist')
+
+                import_logger.error(f"Employee import failed: {result['errors']}")
+                messages.error(request, result['message'])
+        else:
+            form = EmployeeImportForm()
+
+        context = {
+            **self.admin_site.each_context(request),
+            'form': form,
+            'title': 'Import Employees',
+            'opts': self.model._meta,
+        }
+        return render(request, 'admin/employee_import.html', context)
 
 
 class ProjectAdmin(admin.ModelAdmin):
@@ -302,7 +365,24 @@ class ProjectAdmin(admin.ModelAdmin):
     )
 
 
+class LocationAdmin(admin.ModelAdmin):
+    """Admin for Location"""
+    list_display = ['name', 'created_date', 'updated_date']
+    search_fields = ['name']
+    readonly_fields = ['created_date', 'updated_date']
+    fieldsets = (
+        ('Location Information', {
+            'fields': ('name',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_date', 'updated_date'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
 admin.site.register(Project, ProjectAdmin)
+admin.site.register(Location, LocationAdmin)
 admin.site.register(Employee, EmployeeAdmin)
 admin.site.register(Holiday, HolidayAdmin)
 admin.site.register(CompOff)

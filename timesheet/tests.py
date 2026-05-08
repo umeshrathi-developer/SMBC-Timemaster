@@ -11,9 +11,13 @@ from django.urls import reverse
 from openpyxl import Workbook
 
 from timesheet.forms import TimesheetEntryForm
-from timesheet.utils import import_client_timesheet_entries
+from timesheet.utils import import_client_timesheet_entries, import_employee_file
 
-from timesheet.models import CompOff, Employee, Holiday, Project, TimesheetEntry
+from timesheet.models import CompOff, Employee, Holiday, Location, Project, TimesheetEntry
+
+
+def get_location(name):
+    return Location.objects.get_or_create(name=name)[0]
 
 
 class ProjectModelTest(TestCase):
@@ -47,7 +51,7 @@ class EmployeeModelTest(TestCase):
             employee_id='001',
             email='john@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_employee_creation(self):
@@ -65,6 +69,105 @@ class EmployeeModelTest(TestCase):
             )
 
 
+class EmployeeImportTests(TestCase):
+    def _build_employee_workbook_file(self, rows):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(['name', 'employee_id', 'email', 'project', 'location', 'is_active'])
+        for row in rows:
+            worksheet.append(row)
+
+        file_obj = BytesIO()
+        workbook.save(file_obj)
+        workbook.close()
+        file_obj.seek(0)
+        return file_obj
+
+    def test_import_employee_file_creates_project_employee_and_user(self):
+        file_obj = self._build_employee_workbook_file([
+            ['Priya Sharma', 'E1001', 'priya.sharma@test.com', 'CHIP', 'Indore', 'TRUE'],
+        ])
+
+        result = import_employee_file(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['created_count'], 1)
+        self.assertEqual(result['user_created_count'], 1)
+        self.assertEqual(result['project_created_count'], 1)
+
+        employee = Employee.objects.select_related('project', 'user').get(employee_id='E1001')
+        self.assertEqual(employee.name, 'Priya Sharma')
+        self.assertEqual(employee.project.project, 'CHIP')
+        self.assertEqual(employee.project.manager, 'CHIP')
+        self.assertEqual(employee.user.username, 'priya.sharma')
+        self.assertEqual(employee.user.email, 'priya.sharma@test.com')
+        self.assertTrue(employee.user.groups.filter(name='Employee').exists())
+
+    def test_import_employee_file_updates_existing_employee_and_user(self):
+        project = Project.objects.create(
+            project_id=1001,
+            department_name='Risk Tech',
+            project='Old Project',
+            project_code=1000,
+            manager='Old Project',
+        )
+        user = User.objects.create_user(
+            username='amit.kumar',
+            email='old@test.com',
+            password='amit.kumar',
+        )
+        employee = Employee.objects.create(
+            user=user,
+            name='Amit Kumar',
+            employee_id='E1002',
+            email='old@test.com',
+            project=project,
+            location=get_location('Pune'),
+            is_active=True,
+        )
+        file_obj = self._build_employee_workbook_file([
+            ['Amit Kumar', 'E1002', 'amit.kumar@test.com', 'ESG', 'Mumbai', 'NO'],
+        ])
+
+        result = import_employee_file(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['created_count'], 0)
+        self.assertEqual(result['updated_count'], 1)
+        employee.refresh_from_db()
+        user.refresh_from_db()
+        self.assertEqual(employee.email, 'amit.kumar@test.com')
+        self.assertEqual(employee.location.name, 'Mumbai')
+        self.assertFalse(employee.is_active)
+        self.assertEqual(employee.project.project, 'ESG')
+        self.assertEqual(user.email, 'amit.kumar@test.com')
+        self.assertFalse(user.is_active)
+
+    def test_employee_admin_import_accepts_xlsx_upload(self):
+        admin_user = User.objects.create_superuser(
+            username='admin_employee_import',
+            password='testpass123',
+            email='admin@test.com',
+        )
+        file_obj = self._build_employee_workbook_file([
+            ['Neha Patel', 'E1003', 'neha.patel@test.com', 'SDET', 'Indore', 'YES'],
+        ])
+        upload = SimpleUploadedFile(
+            'employees.xlsx',
+            file_obj.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        self.client.login(username='admin_employee_import', password='testpass123')
+        response = self.client.post(
+            reverse('admin:timesheet_employee_import'),
+            {'file': upload},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Employee.objects.filter(employee_id='E1003', user__username='neha.patel').exists())
+
+
 class CompOffModelTest(TestCase):
     def setUp(self):
         self.project = Project.objects.create(
@@ -79,7 +182,7 @@ class CompOffModelTest(TestCase):
             employee_id='002',
             email='john@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_compoff_defaults_to_pending_without_compoff_date(self):
@@ -117,7 +220,7 @@ class TimesheetEntryModelTest(TestCase):
             employee_id='003',
             email='alice@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_timesheet_entry_creation(self):
@@ -141,7 +244,7 @@ class HolidayModelTest(TestCase):
             name='Indore Holiday',
             date=date(2026, 5, 1),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Indore',
+            location=get_location('Indore'),
         )
 
         self.assertIsInstance(holiday, Holiday)
@@ -169,7 +272,7 @@ class EmployeeProjectSelectionTests(TestCase):
             employee_id='E601',
             email='bob@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_timesheet_entry_form_limits_project_to_employee_assignment(self):
@@ -222,7 +325,7 @@ class ClientReportingRulesTests(TestCase):
             employee_id='E701',
             email='charlie@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_client_reporting_hides_weekend_worked_hours(self):
@@ -298,7 +401,7 @@ class AccrualSummaryFormattingTests(TestCase):
             employee_id='E801',
             email='dana@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_accrual_adjusted_message_includes_work_and_taken_dates(self):
@@ -351,14 +454,14 @@ class ClientTimesheetImportTests(TestCase):
             employee_id='E901',
             email='erin@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
         self.second_employee = Employee.objects.create(
             name='Sam',
             employee_id='E902',
             email='sam@example.com',
             project=self.project,
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def tearDown(self):

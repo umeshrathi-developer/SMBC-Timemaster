@@ -5,6 +5,11 @@ from django.db.models import Q
 from .models import Employee, Project, CompOff, Holiday, TimesheetImportLog, TimesheetEntry
 
 
+def _location_name(location):
+    """Return a comparable location name from a Location object or raw string."""
+    return getattr(location, 'name', location) or ''
+
+
 class EmployeeForm(forms.ModelForm):
     """Form for creating/updating employees"""
     class Meta:
@@ -26,9 +31,8 @@ class EmployeeForm(forms.ModelForm):
             'project': forms.Select(attrs={
                 'class': 'form-control',
             }),
-            'location': forms.TextInput(attrs={
+            'location': forms.Select(attrs={
                 'class': 'form-control',
-                'placeholder': 'e.g., Indore'
             }),
             'is_active': forms.CheckboxInput(attrs={
                 'class': 'form-check-input'
@@ -106,7 +110,7 @@ class CompOffForm(forms.ModelForm):
         if holiday_types:
             holiday_filters &= Q(holiday_type__in=holiday_types)
 
-        location = getattr(employee, 'location', '') if employee else ''
+        location = _location_name(getattr(employee, 'location', '')) if employee else ''
         if location:
             holiday_filters &= Q(location=location) | Q(location='')
 
@@ -467,8 +471,9 @@ class TimesheetEntryForm(forms.ModelForm):
                 date=entry_date,
                 holiday_type='SPECIAL_HOLIDAY'
             )
-            if getattr(self.employee, 'location', ''):
-                holiday_filters &= Q(location=self.employee.location) | Q(location='')
+            location = _location_name(getattr(self.employee, 'location', ''))
+            if location:
+                holiday_filters &= Q(location=location) | Q(location='')
 
             if Holiday.objects.filter(holiday_filters).exists():
                 raise forms.ValidationError(

@@ -4,7 +4,11 @@ from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 
-from timesheet.models import CompOff, Employee, Holiday, TimesheetEntry
+from timesheet.models import CompOff, Employee, Holiday, Location, TimesheetEntry
+
+
+def get_location(name):
+    return Location.objects.get_or_create(name=name)[0]
 
 
 class TimesheetSubmissionCompOffTests(TestCase):
@@ -17,7 +21,7 @@ class TimesheetSubmissionCompOffTests(TestCase):
             name='Alice',
             employee_id='E001',
             email='alice@example.com',
-            location='Indore',
+            location=get_location('Indore'),
         )
 
     def test_submission_uses_pending_compoff_for_missing_weekday(self):
@@ -138,7 +142,7 @@ class TimesheetSubmissionCompOffTests(TestCase):
             name='Indore Holiday',
             date=date(2026, 4, 2),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Indore',
+            location=get_location('Indore'),
         )
         CompOff.objects.create(
             employee=self.employee,
@@ -174,7 +178,7 @@ class TimesheetSubmissionCompOffTests(TestCase):
             name='Pune Holiday',
             date=date(2026, 4, 2),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Pune',
+            location=get_location('Pune'),
         )
         CompOff.objects.create(
             employee=self.employee,

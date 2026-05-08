@@ -8,9 +8,11 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import logging
 from django.conf import settings
+from django.contrib.auth.models import Group, User
+from django.db import transaction
 from .models import (
     TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails,
-    Holiday, Employee, TimesheetEntry
+    Holiday, Employee, Project, Location, TimesheetEntry
 )
 
 import_logger = logging.getLogger('timesheet.import')
@@ -156,6 +158,251 @@ def _find_employee(value, employee_lookup):
         if employee:
             return employee
     return None
+
+
+def _split_employee_name(name):
+    """Split an employee name into first and last names for User records."""
+    parts = str(name or '').strip().split()
+    if not parts:
+        return '', ''
+    if len(parts) == 1:
+        return parts[0], ''
+    return parts[0], parts[-1]
+
+
+def _build_employee_username(name):
+    """Build username in firstname.lastname format."""
+    first_name, last_name = _split_employee_name(name)
+    username = first_name.lower()
+    if last_name:
+        username = f'{username}.{last_name.lower()}'
+    return username.replace(' ', '.')
+
+
+def _parse_bool(value):
+    """Parse common Excel boolean values."""
+    if isinstance(value, bool):
+        return value
+    if value in (None, ''):
+        return True
+
+    normalized_value = str(value).strip().lower()
+    if normalized_value in {'true', 'yes', 'y', '1', 'active'}:
+        return True
+    if normalized_value in {'false', 'no', 'n', '0', 'inactive'}:
+        return False
+    raise ValueError(f'Invalid is_active value "{value}". Use TRUE/FALSE or YES/NO.')
+
+
+def _get_next_project_id():
+    """Return the next integer project id."""
+    return (Project.objects.order_by('-project_id').values_list('project_id', flat=True).first() or 0) + 1
+
+
+def _get_or_create_import_project(project_name):
+    """Find or create a project from employee import data."""
+    project_name = str(project_name or '').strip()
+    if not project_name:
+        return None
+
+    project = Project.objects.filter(project__iexact=project_name).first()
+    if project:
+        return project
+
+    return Project.objects.create(
+        project_id=_get_next_project_id(),
+        department_name='Risk Tech',
+        project=project_name,
+        project_code=1000,
+        manager=project_name,
+    )
+
+
+def _get_or_create_location(location_name):
+    """Find or create a location from employee import data."""
+    location_name = str(location_name or '').strip()
+    if not location_name:
+        return None
+
+    location = Location.objects.filter(name__iexact=location_name).first()
+    if location:
+        return location
+
+    return Location.objects.create(name=location_name)
+
+
+def _create_or_update_employee_user(employee):
+    """Create or update the linked Django user for an employee."""
+    if not employee.name:
+        return None, False
+
+    first_name, last_name = _split_employee_name(employee.name)
+    base_username = _build_employee_username(employee.name)
+    if not base_username:
+        base_username = employee.employee_id.lower()
+
+    user_created = False
+    user = employee.user
+    if not user:
+        user = User.objects.filter(username=base_username).first()
+        if user and hasattr(user, 'employee') and user.employee != employee:
+            user = None
+
+    if not user:
+        username = base_username
+        suffix = 1
+        while User.objects.filter(username=username).exists():
+            username = f'{base_username}{suffix}'
+            suffix += 1
+        user = User.objects.create_user(
+            username=username,
+            email=employee.email,
+            password=username,
+            first_name=first_name,
+            last_name=last_name,
+        )
+        user_created = True
+
+    user.email = employee.email
+    user.first_name = first_name
+    user.last_name = last_name
+    user.is_active = employee.is_active
+    user.save()
+
+    group, _ = Group.objects.get_or_create(name='Employee')
+    user.groups.add(group)
+
+    if employee.user_id != user.id:
+        employee.user = user
+        employee.save(update_fields=['user', 'updated_date'])
+
+    return user, user_created
+
+
+def import_employee_file(file_obj):
+    """
+    Import employee master data from an Excel file.
+
+    Expected columns:
+    - name
+    - employee_id
+    - email
+    - project
+    - location
+    - is_active
+    """
+    workbook = None
+    try:
+        workbook = load_workbook(file_obj, data_only=True)
+        worksheet = workbook.active
+        results = {
+            'success': True,
+            'message': 'Employee import completed successfully',
+            'created_count': 0,
+            'updated_count': 0,
+            'user_created_count': 0,
+            'project_created_count': 0,
+            'errors': [],
+        }
+
+        header_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
+        if not header_row:
+            return {
+                'success': False,
+                'message': 'The uploaded file is empty.',
+                'created_count': 0,
+                'updated_count': 0,
+                'user_created_count': 0,
+                'project_created_count': 0,
+                'errors': ['Missing header row.'],
+            }
+
+        header_map = {
+            _normalize_header(column): index
+            for index, column in enumerate(header_row)
+            if column is not None
+        }
+        required_headers = ['name', 'employee_id', 'email', 'project', 'location', 'is_active']
+        missing_headers = [header for header in required_headers if header not in header_map]
+        if missing_headers:
+            return {
+                'success': False,
+                'message': 'Missing required columns in employee import file.',
+                'created_count': 0,
+                'updated_count': 0,
+                'user_created_count': 0,
+                'project_created_count': 0,
+                'errors': [f"Missing columns: {', '.join(missing_headers)}"],
+            }
+
+        for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or not any(row):
+                continue
+
+            try:
+                name = str(row[header_map['name']] or '').strip()
+                employee_id = str(row[header_map['employee_id']] or '').strip()
+                email = str(row[header_map['email']] or '').strip()
+                project_name = str(row[header_map['project']] or '').strip()
+                location_name = str(row[header_map['location']] or '').strip()
+                is_active = _parse_bool(row[header_map['is_active']])
+
+                if not name:
+                    raise ValueError('name is required.')
+                if not employee_id:
+                    raise ValueError('employee_id is required.')
+                if not email:
+                    raise ValueError('email is required.')
+                if not project_name:
+                    raise ValueError('project is required.')
+
+                with transaction.atomic():
+                    existing_project_count = Project.objects.count()
+                    project = _get_or_create_import_project(project_name)
+                    if Project.objects.count() > existing_project_count:
+                        results['project_created_count'] += 1
+                    location = _get_or_create_location(location_name)
+
+                    employee, created = Employee.objects.update_or_create(
+                        employee_id=employee_id,
+                        defaults={
+                            'name': name,
+                            'email': email,
+                            'project': project,
+                            'location': location,
+                            'is_active': is_active,
+                        }
+                    )
+                    _, user_created = _create_or_update_employee_user(employee)
+
+                if created:
+                    results['created_count'] += 1
+                else:
+                    results['updated_count'] += 1
+                if user_created:
+                    results['user_created_count'] += 1
+            except Exception as exc:
+                results['errors'].append(f'Row {row_idx}: {str(exc)}')
+
+        if results['errors']:
+            results['success'] = False
+            results['message'] = f"Employee import completed with {len(results['errors'])} errors"
+
+        return results
+    except Exception as exc:
+        import_logger.error(f"Failed to import employee file: {str(exc)}", exc_info=True)
+        return {
+            'success': False,
+            'message': f'Failed to import employee file: {str(exc)}',
+            'created_count': 0,
+            'updated_count': 0,
+            'user_created_count': 0,
+            'project_created_count': 0,
+            'errors': [str(exc)],
+        }
+    finally:
+        if workbook:
+            workbook.close()
 
 
 def _save_client_timesheet_entry(

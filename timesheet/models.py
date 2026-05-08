@@ -25,6 +25,24 @@ class Project(models.Model):
         return '{} - {} (ID: {})'.format(self.project, self.department_name, self.project_id)
 
 
+class Location(models.Model):
+    """Location master table"""
+    name = models.CharField(max_length=100, unique=True)
+    created_date = models.DateTimeField(auto_now_add=True)
+    updated_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Location'
+        verbose_name_plural = 'Locations'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['name'], name='timesheet_l_name_b53e0a_idx'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Employee(models.Model):
     """Employee master table"""
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
@@ -32,7 +50,7 @@ class Employee(models.Model):
     employee_id = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=100, blank=True)
     project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True)
-    location = models.CharField(max_length=100, blank=True, default='')
+    location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_date = models.DateTimeField(auto_now_add=True)
     updated_date = models.DateTimeField(auto_now=True)

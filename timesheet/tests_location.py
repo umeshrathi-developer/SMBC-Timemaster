@@ -3,8 +3,12 @@ from datetime import date
 from django.test import TestCase
 
 from timesheet.forms import CompOffForm, TimesheetEntryForm
-from timesheet.models import Employee, Holiday, Project
+from timesheet.models import Employee, Holiday, Location, Project
 from timesheet.views import is_holiday_date
+
+
+def get_location(name):
+    return Location.objects.get_or_create(name=name)[0]
 
 
 class LocationAwareHolidayTests(TestCase):
@@ -19,7 +23,7 @@ class LocationAwareHolidayTests(TestCase):
         self.employee = Employee.objects.create(
             name='Alice',
             employee_id='LOC001',
-            location='Indore',
+            location=get_location('Indore'),
             project=self.project,
         )
 
@@ -28,7 +32,7 @@ class LocationAwareHolidayTests(TestCase):
             name='Indore Special Holiday',
             date=date(2026, 5, 1),
             holiday_type='SPECIAL_HOLIDAY',
-            location='Indore',
+            location=get_location('Indore'),
         )
 
         self.assertTrue(is_holiday_date(date(2026, 5, 1), employee=self.employee))
@@ -38,7 +42,7 @@ class LocationAwareHolidayTests(TestCase):
             name='Pune Holiday',
             date=date(2026, 5, 1),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Pune',
+            location=get_location('Pune'),
         )
 
         self.assertFalse(is_holiday_date(date(2026, 5, 1), employee=self.employee))
@@ -48,7 +52,7 @@ class LocationAwareHolidayTests(TestCase):
             name='Pune Special Holiday',
             date=date(2026, 5, 2),
             holiday_type='SPECIAL_HOLIDAY',
-            location='Pune',
+            location=get_location('Pune'),
         )
 
         form = TimesheetEntryForm(
@@ -68,7 +72,7 @@ class LocationAwareHolidayTests(TestCase):
             name='Indore Public Holiday',
             date=date(2026, 5, 4),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Indore',
+            location=get_location('Indore'),
         )
 
         form = CompOffForm(
