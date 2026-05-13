@@ -83,23 +83,38 @@ Timemaster automation/
 - **name**: Full name of employee
 - **employee_id**: Unique employee ID (e.g., 001)
 - **email**: Employee email address
-- **department**: Department name
-- **is_active**: Active status
+- **project**: Assigned project (foreign key to Project)
+- **location**: Assigned location (foreign key to Location)
+- **is_active**: Active/inactive status
+- **user**: Optional linked Django auth User account
 - **created_date**: Record creation date
 - **updated_date**: Last update date
 
-### Timesheet
+### Project
+- **project_id**: Numeric primary key
+- **project**: Project name
+- **department_name**: Department owning the project
+- **project_code**: Internal project code
+- **manager**: Project manager name (optional)
+- **to_email**: Semicolon-separated To email addresses
+- **cc_email**: Semicolon-separated CC email addresses
+- **created_date**: Record creation date
+- **updated_date**: Last update date
+
+### TimesheetEntry
 - **employee**: Foreign key to Employee
-- **work_date**: Date when employee worked on weekend/holiday
-- **day_type**: Type (WEEKEND or HOLIDAY)
-- **description**: Additional details
+- **date**: Date for the timesheet entry
+- **project**: Project name or identifier
+- **hours**: Hours logged for that entry
+- **comments**: Optional notes for the entry
+- **status**: Status of entry (DRAFT, SUBMITTED)
 - **created_date**: Record creation date
 - **updated_date**: Last update date
 
 ### CompOff
 - **employee**: Foreign key to Employee
-- **timesheet**: Links to associated Timesheet record
-- **compoff_date**: Date when Comp-Off will be/was taken (optional, can be updated later)
+- **working_date**: Date the employee worked for comp-off eligibility
+- **compoff_date**: Date when Comp-Off is/will be taken
 - **status**: Status (PENDING, TAKEN)
 - **notes**: Additional notes
 - **created_date**: Record creation date
@@ -107,10 +122,12 @@ Timemaster automation/
 
 ### Holiday
 - **date**: Holiday/Weekend date
-- **holiday_type**: Type (HOLIDAY, WEEKEND, SPECIAL)
-  SPECIAL is holiday by SMBC and not allowed to and a mandatory day off.
-- **description**: Holiday name/description
+- **holiday_type**: Type (PUBLIC_HOLIDAY, WEEKEND, SPECIAL_HOLIDAY)
+  SPECIAL_HOLIDAY is a mandatory company holiday.
+- **name**: Holiday name/description
+- **location**: Optional location tied to the holiday
 - **created_date**: Record creation date
+- **updated_date**: Last update date
 
 ## Installation & Setup
 
