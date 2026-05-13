@@ -190,6 +190,7 @@ The application will be available at:
    - Save the record
 
 2. **Comp-Off Request**
+  Ideally it will be created automatically based on submitted timesheet. In exceptions cases one can create/update using following steps.
    - Go to CompOffs → Add CompOff
    - Link to the corresponding timesheet
    - Status defaults to "PENDING"
@@ -197,7 +198,7 @@ The application will be available at:
 3. **Update Comp-Off Status**
    - When Comp-Off is approved, update status to "APPROVED"
    - When employee takes it, update status to "TAKEN"
-   - Can also add compoff_date at any time
+   - Can also add compoff_date at any time manually (Only for any exception case, else it will be auto-created)
 
 4. **Generate Reports**
    - Click on employee name to view detailed report
