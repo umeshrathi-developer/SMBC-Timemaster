@@ -435,7 +435,7 @@ class ClientReportingRulesTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_send.assert_called_once()
-        self.assertTrue(mock_send.call_args.args[0].startswith('[TEST] '))
+        self.assertFalse(mock_send.call_args.args[0].startswith('[TEST] '))
         self.assertEqual(mock_send.call_args.args[3], ['reviewer@example.com'])
         self.assertEqual(mock_send.call_args.kwargs['cc'], [])
 
@@ -530,7 +530,7 @@ class AccrualSummaryFormattingTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_send.assert_called_once()
-        self.assertTrue(mock_send.call_args.args[0].startswith('[TEST] '))
+        self.assertFalse(mock_send.call_args.args[0].startswith('[TEST] '))
         self.assertEqual(mock_send.call_args.args[3], ['reviewer@example.com'])
         self.assertEqual(mock_send.call_args.kwargs['cc'], [])
 

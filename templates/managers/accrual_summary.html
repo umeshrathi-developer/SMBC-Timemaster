@@ -103,6 +103,7 @@
                 <table class="table table-bordered mb-0 align-middle">
                     <thead class="table-light">
                         <tr>
+                            <th scope="col" class="text-start">Role</th>
                             <th scope="col" class="text-start">Employee Name</th>
                             <th scope="col" class="text-center">Accrual Pending in Hours</th>
                             <th scope="col" class="text-start">Accrual Days (Pending)</th>
@@ -110,29 +111,34 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for record in accrual_data %}
-                        <tr>
-                            <td class="text-start">
-                                <strong>{{ record.employee }}</strong>
-                            </td>
-                            <td class="text-center">
-                                <span class="badge bg-primary">{{ record.pending_hours }}</span>
-                            </td>
-                            <td class="text-start">
-                                {% if record.pending_days != 'N/A' %}
-                                    <small class="text-muted">{{ record.pending_days }}</small>
-                                {% else %}
-                                    <small class="text-muted">{{ record.pending_days }}</small>
+                        {% for group in accrual_groups %}
+                            {% for record in group.records %}
+                            <tr>
+                                {% if forloop.first %}
+                                <td class="text-start fw-bold" rowspan="{{ group.records|length }}">{{ group.role }}</td>
                                 {% endif %}
-                            </td>
-                            <td class="text-start">
-                                {% if record.adjusted_dates != 'N/A' %}
-                                    <small class="text-muted">{{ record.adjusted_dates }}</small>
-                                {% else %}
-                                    <small class="text-muted">{{ record.adjusted_dates }}</small>
-                                {% endif %}
-                            </td>
-                        </tr>
+                                <td class="text-start">
+                                    <strong>{{ record.employee }}</strong>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-primary">{{ record.pending_hours }}</span>
+                                </td>
+                                <td class="text-start">
+                                    {% if record.pending_days != 'N/A' %}
+                                        <small class="text-muted">{{ record.pending_days }}</small>
+                                    {% else %}
+                                        <small class="text-muted">{{ record.pending_days }}</small>
+                                    {% endif %}
+                                </td>
+                                <td class="text-start">
+                                    {% if record.adjusted_dates != 'N/A' %}
+                                        <small class="text-muted">{{ record.adjusted_dates }}</small>
+                                    {% else %}
+                                        <small class="text-muted">{{ record.adjusted_dates }}</small>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
                         {% endfor %}
                     </tbody>
                 </table>

@@ -287,6 +287,7 @@ def import_employee_file(file_obj):
     - name
     - employee_id
     - email
+    - role (optional: Dev or QA; defaults to Dev)
     - project
     - location
     - is_active
@@ -343,6 +344,7 @@ def import_employee_file(file_obj):
                 name = str(row[header_map['name']] or '').strip()
                 employee_id = str(row[header_map['employee_id']] or '').strip()
                 email = str(row[header_map['email']] or '').strip()
+                role = str(row[header_map['role']] or 'Dev').strip() if 'role' in header_map else 'Dev'
                 project_name = str(row[header_map['project']] or '').strip()
                 location_name = str(row[header_map['location']] or '').strip()
                 is_active = _parse_bool(row[header_map['is_active']])
@@ -355,6 +357,8 @@ def import_employee_file(file_obj):
                     raise ValueError('email is required.')
                 if not project_name:
                     raise ValueError('project is required.')
+                if role not in {'Dev', 'QA'}:
+                    raise ValueError('role must be Dev or QA.')
 
                 with transaction.atomic():
                     existing_project_count = Project.objects.count()
@@ -368,6 +372,7 @@ def import_employee_file(file_obj):
                         defaults={
                             'name': name,
                             'email': email,
+                            'role': role,
                             'project': project,
                             'location': location,
                             'is_active': is_active,

@@ -16,7 +16,7 @@
     <div class="card-body">
         <form method="get" class="row g-3">
             <div class="col-md-6">
-                <input type="search" name="search" class="form-control" placeholder="Search by name, ID, email, project, department, manager..." value="{{ search_query }}">
+                <input type="search" name="search" class="form-control" placeholder="Search by name, ID, email, role, project, department, manager..." value="{{ search_query }}">
             </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-outline-secondary">
@@ -41,6 +41,7 @@
                     <th>Name</th>
                     <th>Employee ID</th>
                     <th>Email</th>
+                    <th>Role</th>
                     <th>Department</th>
                     <th>Project</th>
                     <th>Manager</th>
@@ -55,6 +56,7 @@
                     <td><strong>{{ employee.name }}</strong></td>
                     <td>{{ employee.employee_id }}</td>
                     <td>{{ employee.email|default:"-" }}</td>
+                    <td>{{ employee.role }}</td>
                     <td>{{ employee.project.department_name|default:"-" }}</td>
                     <td>{{ employee.project.project|default:"-" }}</td>
                     <td>{{ employee.project.manager|default:"-" }}</td>

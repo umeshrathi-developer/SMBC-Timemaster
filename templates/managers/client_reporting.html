@@ -104,9 +104,18 @@
                 <table class="table table-bordered mb-0 text-center align-middle">
                     <thead class="table-light">
                         <tr>
+                            <th scope="col"></th>
+                            <!-- <th scope="col">Role</th> -->
+                            {% for group in role_groups %}
+                            <th scope="col" colspan="{{ group.colspan }}" class="text-start">{{ group.role }}</th>
+                            {% endfor %}
+                        </tr>
+                        <tr>
                             <th scope="col">Date</th>
-                            {% for employee in employees %}
-                            <th scope="col">{{ employee.name }}</th>
+                            {% for group in role_groups %}
+                                {% for employee in group.employees %}
+                                <th scope="col">{{ employee.name }}</th>
+                                {% endfor %}
                             {% endfor %}
                         </tr>
                     </thead>

@@ -3,7 +3,6 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Client Reporting</title>
     <style>
         body { font-family: Arial, sans-serif; color: #333; }
         table { width: 100%; border-collapse: collapse; }
@@ -16,15 +15,24 @@
     </style>
 </head>
 <body>
-    <h2>Client Reporting</h2>
-    <p><strong>Approver PM:</strong> {{ approver_manager }}</p>
-
+    <p>Hi {{ approver_manager }},</p>
+    <p>Please find below your {{ project_name }} team's {{ report_date_range }} timesheet. Request you to review and approve it.
+Please let me know if you have any questions.</p>
     <table>
         <thead>
             <tr>
+                <th></th>
+                <!-- <th>Role</th> -->
+                {% for group in role_groups %}
+                <th colspan="{{ group.colspan }}" class="text-start">{{ group.role }}</th>
+                {% endfor %}
+            </tr>
+            <tr>
                 <th>Date</th>
-                {% for employee in employees %}
-                <th>{{ employee.name }}</th>
+                {% for group in role_groups %}
+                    {% for employee in group.employees %}
+                    <th>{{ employee.name }}</th>
+                    {% endfor %}
                 {% endfor %}
             </tr>
         </thead>
@@ -50,6 +58,5 @@
             </tr>
         </tbody>
     </table>
-    <p>Total effort across all employees: <strong>{{ report_total_hours }}</strong></p>
 </body>
 </html>

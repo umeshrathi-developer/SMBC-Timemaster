@@ -171,7 +171,7 @@ class EmployeeImportForm(forms.Form):
             'class': 'form-control',
             'accept': '.xlsx,.xlsm',
         }),
-        help_text='Upload an Excel file with columns: name, employee_id, email, project, location, is_active'
+        help_text='Upload an Excel file with columns: name, employee_id, email, role, project, location, is_active. Role is optional and defaults to Dev.'
     )
 
     def clean_file(self):
@@ -283,13 +283,13 @@ class TimesheetEntryAdmin(admin.ModelAdmin):
 class EmployeeAdmin(admin.ModelAdmin):
     """Admin for Employee"""
     change_list_template = 'admin/employee_change_list.html'
-    list_display = ['name', 'employee_id', 'email', 'project', 'location', 'is_active']
-    list_filter = ['is_active', 'project', 'location', 'created_date']
-    search_fields = ['name', 'employee_id', 'email', 'project__project', 'project__manager', 'location__name']
+    list_display = ['name', 'employee_id', 'email', 'role', 'project', 'location', 'is_active']
+    list_filter = ['role', 'is_active', 'project', 'location', 'created_date']
+    search_fields = ['name', 'employee_id', 'email', 'role', 'project__project', 'project__manager', 'location__name']
     readonly_fields = ['created_date', 'updated_date']
     fieldsets = (
         ('Basic Information', {
-            'fields': ('user', 'name', 'employee_id', 'email')
+            'fields': ('user', 'name', 'employee_id', 'email', 'role')
         }),
         ('Project Assignment', {
             'fields': ('project', 'location')

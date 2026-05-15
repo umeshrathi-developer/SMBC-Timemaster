@@ -20,6 +20,7 @@
     <table>
         <thead>
             <tr>
+                <th>Role</th>
                 <th>Employee Name</th>
                 <th class="text-center">Accrual Pending in Hours</th>
                 <th>Accrual Days (Pending)</th>
@@ -27,13 +28,18 @@
             </tr>
         </thead>
         <tbody>
-            {% for record in accrual_data %}
-            <tr>
-                <td><strong>{{ record.employee }}</strong></td>
-                <td class="text-center"><span class="badge">{{ record.pending_hours }}</span></td>
-                <td>{{ record.pending_days }}</td>
-                <td>{{ record.adjusted_dates }}</td>
-            </tr>
+            {% for group in accrual_groups %}
+                {% for record in group.records %}
+                <tr>
+                    {% if forloop.first %}
+                    <td rowspan="{{ group.records|length }}"><strong>{{ group.role }}</strong></td>
+                    {% endif %}
+                    <td><strong>{{ record.employee }}</strong></td>
+                    <td class="text-center"><span class="badge">{{ record.pending_hours }}</span></td>
+                    <td>{{ record.pending_days }}</td>
+                    <td>{{ record.adjusted_dates }}</td>
+                </tr>
+                {% endfor %}
             {% endfor %}
         </tbody>
     </table>

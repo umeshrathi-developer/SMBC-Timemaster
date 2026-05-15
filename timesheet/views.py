@@ -118,10 +118,16 @@ def get_validated_test_email_recipients(value):
 
 def get_project_email_recipients(employees):
     """Return To and CC recipients from projects assigned to the report employees."""
-    project_ids = [
-        project_id for project_id in employees.values_list('project_id', flat=True).distinct()
-        if project_id
-    ]
+    if hasattr(employees, 'values_list'):
+        project_ids = [
+            project_id for project_id in employees.values_list('project_id', flat=True).distinct()
+            if project_id
+        ]
+    else:
+        project_ids = sorted({
+            employee.project_id for employee in employees
+            if getattr(employee, 'project_id', None)
+        })
     to_recipients = []
     cc_recipients = []
     to_seen = set()
@@ -148,6 +154,20 @@ def get_default_from_email():
     return getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'SERVER_EMAIL', 'noreply@example.com')
 
 
+def get_role_groups(employees):
+    """Return employees grouped in the report display order."""
+    groups = []
+    for role in ('Dev', 'QA'):
+        role_employees = [employee for employee in employees if employee.role == role]
+        if role_employees:
+            groups.append({
+                'role': role,
+                'employees': role_employees,
+                'colspan': len(role_employees),
+            })
+    return groups
+
+
 def queue_report_email(
     request, action, employees, subject, template_name, email_context,
     report_name, failure_log_message
@@ -168,10 +188,9 @@ def queue_report_email(
         messages.error(request, 'No To email recipients found in the selected project records.')
         return False
 
-    subject_prefix = '[TEST] ' if is_test_email else ''
     html_message = render_to_string(template_name, email_context)
     send_html_email_async(
-        f'{subject_prefix}{subject}',
+        subject,
         html_message,
         get_default_from_email(),
         recipients,
@@ -785,13 +804,20 @@ def client_reporting(request):
     employees = []
     report_rows = []
     employee_totals = []
+    role_groups = []
     report_total_hours = 0
     accrual_pending_hours_list = []
     accrual_days_list = []
     accrual_adjusted_list = []
 
     if selected_manager:
-        employees = Employee.objects.filter(project__manager=selected_manager, is_active=True).select_related('project').order_by('name')
+        employees = list(
+            Employee.objects.filter(
+                project__manager=selected_manager,
+                is_active=True
+            ).select_related('project').order_by('role', 'name')
+        )
+        role_groups = get_role_groups(employees)
 
         if start_date_input and end_date_input:
             try:
@@ -930,15 +956,33 @@ def client_reporting(request):
             elif not report_rows:
                 messages.error(request, 'Report has no rows. Please check the date range.')
             else:
+                project_name = selected_manager
+                if employees and employees[0].project:
+                    project_name = employees[0].project.project
+
+                report_date_range = ''
+                if start_date and end_date:
+                    if start_date.year == end_date.year:
+                        if start_date.month == end_date.month:
+                            report_date_range = f"{start_date.strftime('%B')} {start_date.day}- {end_date.day}, {start_date.year}"
+                        else:
+                            report_date_range = f"{start_date.strftime('%B %d')} - {end_date.strftime('%B %d')}, {start_date.year}"
+                    else:
+                        report_date_range = f"{start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')}"
+
                 queue_report_email(
                     request,
                     action,
                     employees,
-                    f'Timesheet Report - {selected_manager} ({start_date_input} to {end_date_input})',
+                    f'{project_name} - {report_date_range} Timesheet',
+                    # f'Timesheet Report - {selected_manager} ({start_date_input} to {end_date_input})',
                     'managers/client_reporting_email.html',
                     {
                         'approver_manager': selected_manager,
+                        'project_name': project_name,
+                        'report_date_range': report_date_range,
                         'employees': employees,
+                        'role_groups': role_groups,
                         'report_rows': report_rows,
                         'employee_totals': employee_totals,
                         'report_total_hours': report_total_hours,
@@ -958,6 +1002,7 @@ def client_reporting(request):
         'start_date': start_date_input,
         'end_date': end_date_input,
         'employees': employees,
+        'role_groups': role_groups,
         'report_rows': report_rows,
         'employee_totals': employee_totals,
         'report_total_hours': report_total_hours,
@@ -987,12 +1032,18 @@ def accrual_summary(request):
         end_date_input = request.GET.get('end_date', '').strip()
 
     accrual_data = []
+    accrual_groups = []
     start_date = None
     end_date = None
     employees = []
 
     if selected_manager:
-        employees = Employee.objects.filter(project__manager=selected_manager, is_active=True).select_related('project').order_by('name')
+        employees = list(
+            Employee.objects.filter(
+                project__manager=selected_manager,
+                is_active=True
+            ).select_related('project').order_by('role', 'name')
+        )
 
         if start_date_input and end_date_input:
             try:
@@ -1042,11 +1093,20 @@ def accrual_summary(request):
                             accrual_adjusted_str = 'N/A'
 
                         accrual_data.append({
+                            'role': employee.role,
                             'employee': employee.name,
                             'pending_hours': accrual_pending_hours,
                             'pending_days': accrual_days_str,
                             'adjusted_dates': accrual_adjusted_str,
                         })
+                    accrual_groups = [
+                        {
+                            'role': role,
+                            'records': [record for record in accrual_data if record['role'] == role],
+                        }
+                        for role in ('Dev', 'QA')
+                        if any(record['role'] == role for record in accrual_data)
+                    ]
                 else:
                     messages.warning(request, 'No employees found for the selected manager.')
 
@@ -1069,6 +1129,7 @@ def accrual_summary(request):
                     {
                         'manager_name': selected_manager,
                         'accrual_data': accrual_data,
+                        'accrual_groups': accrual_groups,
                         'start_date': start_date_input,
                         'end_date': end_date_input,
                     },
@@ -1082,6 +1143,7 @@ def accrual_summary(request):
         'start_date': start_date_input,
         'end_date': end_date_input,
         'accrual_data': accrual_data,
+        'accrual_groups': accrual_groups,
     }
     return render(request, 'managers/accrual_summary.html', context)
 

@@ -47,10 +47,16 @@ class Location(models.Model):
 
 class Employee(models.Model):
     """Employee master table"""
+    ROLE_CHOICES = (
+        ('Dev', 'Dev'),
+        ('QA', 'QA'),
+    )
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=100, blank=False)
     employee_id = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=100, blank=True)
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='Dev')
     project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True)
     location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)

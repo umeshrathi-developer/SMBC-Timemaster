@@ -14,7 +14,7 @@ class EmployeeForm(forms.ModelForm):
     """Form for creating/updating employees"""
     class Meta:
         model = Employee
-        fields = ['name', 'employee_id', 'email', 'project', 'location', 'is_active']
+        fields = ['name', 'employee_id', 'email', 'role', 'project', 'location', 'is_active']
         widgets = {
             'name': forms.TextInput(attrs={
                 'class': 'form-control',
@@ -27,6 +27,9 @@ class EmployeeForm(forms.ModelForm):
             'email': forms.EmailInput(attrs={
                 'class': 'form-control',
                 'placeholder': 'email@example.com'
+            }),
+            'role': forms.Select(attrs={
+                'class': 'form-control',
             }),
             'project': forms.Select(attrs={
                 'class': 'form-control',
