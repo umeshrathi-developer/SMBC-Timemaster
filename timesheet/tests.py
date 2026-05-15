@@ -480,7 +480,6 @@ class AccrualSummaryFormattingTests(TestCase):
         response = self.client.get(
             reverse('accrual_summary'),
             {
-                'manager': 'Manager Four',
                 'start_date': '2026-04-01',
                 'end_date': '2026-04-30',
             },
@@ -492,18 +491,51 @@ class AccrualSummaryFormattingTests(TestCase):
             'Worked on 05-Apr-2026, 12-Apr-2026 adjusted against PTO on 07-Apr-2026, 14-Apr-2026'
         )
 
-    def test_accrual_summary_email_uses_project_to_and_cc_recipients(self):
-        self.project.to_email = 'accrual.to@example.com'
-        self.project.cc_email = 'accrual.cc@example.com'
-        self.project.save()
+    def test_accrual_summary_shows_all_managers_in_separate_tables(self):
+        second_project = Project.objects.create(
+            project_id=802,
+            department_name='Risk Tech',
+            project='Risk QA',
+            project_code=1802,
+            manager='Manager Five',
+        )
+        Employee.objects.create(
+            name='Quinn',
+            employee_id='E802',
+            email='quinn@example.com',
+            role='QA',
+            project=second_project,
+            location=get_location('Indore'),
+        )
 
+        self.client.login(username='admin_accrual', password='testpass123')
+        response = self.client.get(
+            reverse('accrual_summary'),
+            {
+                'start_date': '2026-04-01',
+                'end_date': '2026-04-30',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [table['manager'] for table in response.context['summary_tables']],
+            ['Manager Five', 'Manager Four']
+        )
+        self.assertEqual(response.context['summary_tables'][0]['accrual_groups'][0]['role_label'], 'QA')
+        self.assertEqual(response.context['summary_tables'][1]['accrual_groups'][0]['role_label'], 'DEV')
+
+    @override_settings(
+        ACCRUAL_SUMMARY_TO_EMAILS='accrual.to@example.com',
+        ACCRUAL_SUMMARY_CC_EMAILS='accrual.cc@example.com',
+    )
+    def test_accrual_summary_email_uses_project_to_and_cc_recipients(self):
         self.client.login(username='admin_accrual', password='testpass123')
         with patch('timesheet.views.send_html_email_async') as mock_send:
             response = self.client.post(
                 reverse('accrual_summary'),
                 {
                     'action': 'email_report',
-                    'manager': 'Manager Four',
                     'start_date': '2026-04-01',
                     'end_date': '2026-04-30',
                 },
@@ -511,6 +543,9 @@ class AccrualSummaryFormattingTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_send.assert_called_once()
+        self.assertIn('April 30, 2026', mock_send.call_args.args[0])
+        self.assertIn('April 30, 2026', mock_send.call_args.args[1])
+        self.assertNotIn('2026-04-30', mock_send.call_args.args[1])
         self.assertEqual(mock_send.call_args.args[3], ['accrual.to@example.com'])
         self.assertEqual(mock_send.call_args.kwargs['cc'], ['accrual.cc@example.com'])
 
@@ -521,7 +556,6 @@ class AccrualSummaryFormattingTests(TestCase):
                 reverse('accrual_summary'),
                 {
                     'action': 'test_email_report',
-                    'manager': 'Manager Four',
                     'start_date': '2026-04-01',
                     'end_date': '2026-04-30',
                     'test_email': 'reviewer@example.com',

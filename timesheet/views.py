@@ -162,10 +162,98 @@ def get_role_groups(employees):
         if role_employees:
             groups.append({
                 'role': role,
+                'role_label': role.upper(),
                 'employees': role_employees,
                 'colspan': len(role_employees),
             })
     return groups
+
+
+def get_accrual_summary_email_recipients():
+    """Return consolidated accrual summary To and CC recipients from settings."""
+    return (
+        parse_semicolon_emails(getattr(settings, 'ACCRUAL_SUMMARY_TO_EMAILS', '')),
+        parse_semicolon_emails(getattr(settings, 'ACCRUAL_SUMMARY_CC_EMAILS', '')),
+    )
+
+
+def get_accrual_groups(accrual_data):
+    """Group accrual records by role in report display order."""
+    return [
+        {
+            'role': role,
+            'role_label': role.upper(),
+            'records': [record for record in accrual_data if record['role'] == role],
+        }
+        for role in ('Dev', 'QA')
+        if any(record['role'] == role for record in accrual_data)
+    ]
+
+
+def build_accrual_summary_tables(start_date, end_date):
+    """Build accrual summary tables for every manager/team."""
+    managers = Project.objects.values_list(
+        'manager', flat=True
+    ).exclude(manager__exact='').distinct().order_by('manager')
+    summary_tables = []
+
+    for manager in managers:
+        employees = list(
+            Employee.objects.filter(
+                project__manager=manager,
+                is_active=True
+            ).select_related('project').order_by('role', 'name')
+        )
+        if not employees:
+            continue
+
+        accrual_data = []
+        for employee in employees:
+            pending_compoffs = CompOff.objects.filter(employee=employee, status='PENDING')
+            accrual_pending_hours = pending_compoffs.count() * 8
+            accrual_days = [c.working_date.strftime('%d-%b-%Y') for c in pending_compoffs if c.working_date]
+            accrual_days_str = ', '.join(accrual_days) if accrual_days else 'N/A'
+
+            taken_compoffs = CompOff.objects.filter(
+                employee=employee,
+                status='TAKEN',
+                compoff_date__range=(start_date, end_date)
+            ).order_by('compoff_date', 'working_date')
+            work_dates = [
+                c.working_date.strftime('%d-%b-%Y')
+                for c in taken_compoffs
+                if c.working_date
+            ]
+            compoff_dates = [
+                c.compoff_date.strftime('%d-%b-%Y')
+                for c in taken_compoffs
+                if c.compoff_date
+            ]
+            if work_dates and compoff_dates:
+                accrual_adjusted_str = (
+                    f"Worked on {', '.join(work_dates)} adjusted against PTO on "
+                    f"{', '.join(compoff_dates)}"
+                )
+            else:
+                accrual_adjusted_str = 'N/A'
+
+            accrual_data.append({
+                'role': employee.role,
+                'role_label': employee.role.upper(),
+                'employee': employee.name,
+                'pending_hours': accrual_pending_hours,
+                'pending_days': accrual_days_str,
+                'adjusted_dates': accrual_adjusted_str,
+            })
+
+        summary_tables.append({
+            'manager': manager,
+            'accrual_data': accrual_data,
+            'accrual_groups': get_accrual_groups(accrual_data),
+            'total_records': len(accrual_data),
+        })
+
+    return summary_tables
 
 
 def queue_report_email(
@@ -1015,133 +1103,101 @@ def client_reporting(request):
 
 @login_required(login_url='login')
 def accrual_summary(request):
-    """Display accrual summary data (Pending Hours, Days, Adjusted) for employees under a manager."""
+    """Display consolidated accrual summary data for all managers."""
     if not is_admin(request.user):
         messages.error(request, 'You do not have permission to access this page.')
         return redirect('dashboard')
 
-    managers = Project.objects.values_list('manager', flat=True).exclude(manager__exact='').distinct().order_by('manager')
-    
     if request.method == 'POST':
-        selected_manager = request.POST.get('manager', '').strip()
         start_date_input = request.POST.get('start_date', '').strip()
         end_date_input = request.POST.get('end_date', '').strip()
     else:
-        selected_manager = request.GET.get('manager', '').strip()
         start_date_input = request.GET.get('start_date', '').strip()
         end_date_input = request.GET.get('end_date', '').strip()
 
+    summary_tables = []
     accrual_data = []
     accrual_groups = []
     start_date = None
     end_date = None
-    employees = []
+    end_date_display = end_date_input
 
-    if selected_manager:
-        employees = list(
-            Employee.objects.filter(
-                project__manager=selected_manager,
-                is_active=True
-            ).select_related('project').order_by('role', 'name')
-        )
+    if start_date_input and end_date_input:
+        try:
+            start_date = datetime.strptime(start_date_input, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_input, '%Y-%m-%d').date()
+            end_date_display = end_date.strftime('%B %d, %Y')
+        except ValueError:
+            start_date = None
+            end_date = None
+            messages.error(request, 'Invalid date format. Use YYYY-MM-DD.')
 
-        if start_date_input and end_date_input:
-            try:
-                start_date = datetime.strptime(start_date_input, '%Y-%m-%d').date()
-                end_date = datetime.strptime(end_date_input, '%Y-%m-%d').date()
-            except ValueError:
-                start_date = None
-                end_date = None
-                messages.error(request, 'Invalid date format. Use YYYY-MM-DD.')
-
-            if start_date and end_date:
-                if end_date < start_date:
-                    messages.error(request, 'End date cannot be before start date.')
-                elif employees:
-                    # Gather accrual data for each employee
-                    for employee in employees:
-                        # Accrual Pending in Hours: count of pending CompOffs * 8 (assuming 8 hours per day)
-                        pending_compoffs = CompOff.objects.filter(employee=employee, status='PENDING')
-                        accrual_pending_hours = pending_compoffs.count() * 8
-
-                        # Accrual Days: dates of pending compoffs (working_date)
-                        accrual_days = [c.working_date.strftime('%d-%b-%Y') for c in pending_compoffs if c.working_date]
-                        accrual_days_str = ', '.join(accrual_days) if accrual_days else 'N/A'
-
-                        # Accrual Adjusted: Comp-Off dates for 'TAKEN' status within date range
-                        taken_compoffs = CompOff.objects.filter(
-                            employee=employee,
-                            status='TAKEN',
-                            compoff_date__range=(start_date, end_date)
-                        ).order_by('compoff_date', 'working_date')
-                        work_dates = [
-                            c.working_date.strftime('%d-%b-%Y')
-                            for c in taken_compoffs
-                            if c.working_date
-                        ]
-                        compoff_dates = [
-                            c.compoff_date.strftime('%d-%b-%Y')
-                            for c in taken_compoffs
-                            if c.compoff_date
-                        ]
-                        if work_dates and compoff_dates:
-                            accrual_adjusted_str = (
-                                f"Worked on {', '.join(work_dates)} adjusted against PTO on "
-                                f"{', '.join(compoff_dates)}"
-                            )
-                        else:
-                            accrual_adjusted_str = 'N/A'
-
-                        accrual_data.append({
-                            'role': employee.role,
-                            'employee': employee.name,
-                            'pending_hours': accrual_pending_hours,
-                            'pending_days': accrual_days_str,
-                            'adjusted_dates': accrual_adjusted_str,
-                        })
-                    accrual_groups = [
-                        {
-                            'role': role,
-                            'records': [record for record in accrual_data if record['role'] == role],
-                        }
-                        for role in ('Dev', 'QA')
-                        if any(record['role'] == role for record in accrual_data)
-                    ]
-                else:
-                    messages.warning(request, 'No employees found for the selected manager.')
+        if start_date and end_date:
+            if end_date < start_date:
+                messages.error(request, 'End date cannot be before start date.')
+            else:
+                summary_tables = build_accrual_summary_tables(start_date, end_date)
+                accrual_data = [
+                    record
+                    for table in summary_tables
+                    for record in table['accrual_data']
+                ]
+                accrual_groups = get_accrual_groups(accrual_data)
+                if not summary_tables:
+                    messages.warning(request, 'No active employees found for any manager.')
 
     if request.method == 'POST':
         action = request.POST.get('action')
         if action in ('email_report', 'test_email_report'):
-            if not selected_manager or not start_date_input or not end_date_input:
-                messages.error(request, 'Please select a manager and date range before emailing the report.')
-            elif not employees:
-                messages.error(request, 'No employees available for the selected manager.')
-            elif not accrual_data:
+            if not start_date_input or not end_date_input:
+                messages.error(request, 'Please select a date range before emailing the report.')
+            elif not summary_tables:
                 messages.error(request, 'No accrual data available. Please check the date range.')
             else:
-                queue_report_email(
-                    request,
-                    action,
-                    employees,
-                    f'Accrual Summary Report - {selected_manager} ({start_date_input} to {end_date_input})',
-                    'managers/accrual_summary_email.html',
-                    {
-                        'manager_name': selected_manager,
-                        'accrual_data': accrual_data,
-                        'accrual_groups': accrual_groups,
-                        'start_date': start_date_input,
-                        'end_date': end_date_input,
-                    },
-                    'Accrual summary report',
-                    f"Failed to send accrual summary email for user {request.user.username}"
-                )
+                is_test_email = action == 'test_email_report'
+                try:
+                    if is_test_email:
+                        recipients = get_validated_test_email_recipients(request.POST.get('test_email', ''))
+                        cc_recipients = []
+                    else:
+                        recipients, cc_recipients = get_accrual_summary_email_recipients()
+                except ValidationError as exc:
+                    messages.error(request, '; '.join(exc.messages))
+                    recipients = []
+                    cc_recipients = []
+
+                if not recipients:
+                    messages.error(request, 'No To email recipients configured for accrual summary in settings.py.')
+                else:
+                    html_message = render_to_string(
+                        'managers/accrual_summary_email.html',
+                        {
+                            'summary_tables': summary_tables,
+                            'accrual_data': accrual_data,
+                            'start_date': start_date_input,
+                            'end_date': end_date_input,
+                            'end_date_display': end_date_display,
+                        }
+                    )
+                    send_html_email_async(
+                        f'SMBC Risk Tech Timesheets: Accrual Details (as on {end_date_display})',
+                        html_message,
+                        get_default_from_email(),
+                        recipients,
+                        f"Accrual summary report emailed successfully to {len(recipients)} To and {len(cc_recipients)} CC recipients by user: {request.user.username}",
+                        f"Failed to send accrual summary email for user {request.user.username}",
+                        cc=cc_recipients
+                    )
+                    if is_test_email:
+                        messages.success(request, 'Test accrual summary report email has been queued and will be sent shortly.')
+                    else:
+                        messages.success(request, 'Accrual summary report email has been queued and will be sent shortly.')
 
     context = {
-        'managers': managers,
-        'selected_manager': selected_manager,
         'start_date': start_date_input,
         'end_date': end_date_input,
+        'end_date_display': end_date_display,
+        'summary_tables': summary_tables,
         'accrual_data': accrual_data,
         'accrual_groups': accrual_groups,
     }

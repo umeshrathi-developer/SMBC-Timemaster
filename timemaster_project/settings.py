@@ -123,6 +123,10 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'umesh.rathi@infobeans.com')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'tpau ezxt wghj llzw')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'umesh.rathi@infobeans.com')
 
+# Accrual summary is sent as one consolidated email for all teams.
+ACCRUAL_SUMMARY_TO_EMAILS = os.environ.get('ACCRUAL_SUMMARY_TO_EMAILS', '')
+ACCRUAL_SUMMARY_CC_EMAILS = os.environ.get('ACCRUAL_SUMMARY_CC_EMAILS', '')
+
 
 # ============ LOGGING CONFIGURATION ============
 LOGGING = {

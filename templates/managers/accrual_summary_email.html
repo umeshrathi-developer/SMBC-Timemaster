@@ -10,13 +10,26 @@
         th { background: #f4f4f4; font-weight: bold; }
         .text-center { text-align: center; }
         .badge { display: inline-block; padding: 0.25em 0.5em; border-radius: 0.25rem; background: #e9ecef; color: #333; font-size: 0.85rem; }
+        .team-title { margin-top: 24px; margin-bottom: 8px; font-size: 16px; font-weight: bold; }
+        .signature { margin-top: 24px; line-height: 1.5; }
     </style>
 </head>
 <body>
-    <h2>Accrual Summary Report</h2>
-    <p><strong>Manager:</strong> {{ manager_name }}</p>
-    <p><strong>Period:</strong> {{ start_date }} to {{ end_date }}</p>
+    <!-- <h2>Accrual Summary Report</h2> -->
+    <p>
+    Hi All,
+    </p>
+    <p>
+    Please find below the accrual details effective {{ end_date_display }}, for the Risk Tech team members working with you.
+    These details explain the currently pending accruals for each team member, accrual day (the day the TM worked but hours were not reported because it was an SMBC holiday) and accruals adjusted (the day the accrual hours were reported in lieu of accrual days). The days on which accruals are adjusted are marked in grey in the timesheet sent for approval.
+    </p>
+    I'll adjust the pending accruals against the team member's next leave or holiday.
+    We have also kept these details in SharePoint at this <a href="https://infobeans-my.sharepoint.com/:x:/r/personal/pankaj_bothara_infobeans_com1/_layouts/15/doc2.aspx?sourcedoc=%7B074CD6FB-B7C4-4FE2-8206-28DC5DBD550F%7D&file=Extra%20working%20Day%20%26%20Comp%20offs.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1">location</a>
+    </p>
+    <p><strong>Accruals Calculation as on {{ end_date_display }}</strong></p>
 
+    {% for table in summary_tables %}
+    <div class="team-title">Approver RM: {{ table.manager }}</div>
     <table>
         <thead>
             <tr>
@@ -28,11 +41,11 @@
             </tr>
         </thead>
         <tbody>
-            {% for group in accrual_groups %}
+            {% for group in table.accrual_groups %}
                 {% for record in group.records %}
                 <tr>
                     {% if forloop.first %}
-                    <td rowspan="{{ group.records|length }}"><strong>{{ group.role }}</strong></td>
+                    <td rowspan="{{ group.records|length }}"><strong>{{ group.role_label }}</strong></td>
                     {% endif %}
                     <td><strong>{{ record.employee }}</strong></td>
                     <td class="text-center"><span class="badge">{{ record.pending_hours }}</span></td>
@@ -43,6 +56,11 @@
             {% endfor %}
         </tbody>
     </table>
-    <p style="margin-top: 20px;"><em>Total Records: <strong>{{ accrual_data|length }}</strong></em></p>
+    <!-- <p><em>Total Records: <strong>{{ table.total_records }}</strong></em></p> -->
+    {% endfor %}
+    <div class="signature">
+        Best Regards,<br>
+        Mahesh Kadam
+    </div>
 </body>
 </html>
