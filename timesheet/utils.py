@@ -130,20 +130,37 @@ def _get_employee_location_name(employee):
     return getattr(location, 'name', location) or ''
 
 
+def _holiday_applies_to_location(holiday, location):
+    """Return whether a holiday applies to a location.
+
+    Holiday.location can be blank for global holidays or comma-separated for
+    multiple applicable locations.
+    """
+    holiday_location = str(getattr(holiday, 'location', '') or '').strip()
+    if not holiday_location or not location:
+        return True
+
+    location = str(location).strip().lower()
+    holiday_locations = [
+        item.strip().lower()
+        for item in holiday_location.split(',')
+        if item.strip()
+    ]
+    return location in holiday_locations
+
+
 def _is_weekend_or_public_holiday(entry_date, employee):
     """Return whether an imported entry is eligible for CompOff accrual."""
     if entry_date.weekday() >= 5:
         return True
 
-    holiday_filters = Q(
+    holidays = Holiday.objects.filter(
         date=entry_date,
         holiday_type='PUBLIC_HOLIDAY'
     )
     location = _get_employee_location_name(employee)
-    if location:
-        holiday_filters &= Q(location=location) | Q(location='')
 
-    return Holiday.objects.filter(holiday_filters).exists()
+    return any(_holiday_applies_to_location(holiday, location) for holiday in holidays)
 
 
 def _create_import_compoff_if_eligible(entry, results):

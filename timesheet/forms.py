@@ -10,6 +10,35 @@ def _location_name(location):
     return getattr(location, 'name', location) or ''
 
 
+def _holiday_applies_to_location(holiday, location):
+    """Return whether a holiday applies to a location.
+
+    Holiday.location can be blank for global holidays or comma-separated for
+    multiple applicable locations.
+    """
+    holiday_location = str(getattr(holiday, 'location', '') or '').strip()
+    if not holiday_location or not location:
+        return True
+
+    location = str(location).strip().lower()
+    holiday_locations = [
+        item.strip().lower()
+        for item in holiday_location.split(',')
+        if item.strip()
+    ]
+    return location in holiday_locations
+
+
+def _holiday_exists_for_location(holiday_date, holiday_types, location):
+    """Check whether an applicable holiday exists for the location."""
+    holiday_filters = Q(date=holiday_date)
+    if holiday_types:
+        holiday_filters &= Q(holiday_type__in=holiday_types)
+
+    holidays = Holiday.objects.filter(holiday_filters)
+    return any(_holiday_applies_to_location(holiday, location) for holiday in holidays)
+
+
 class EmployeeForm(forms.ModelForm):
     """Form for creating/updating employees"""
     class Meta:
@@ -109,15 +138,8 @@ class CompOffForm(forms.ModelForm):
     def _holiday_exists_for_employee(self, holiday_date, holiday_types=None):
         """Check whether a holiday exists for the selected employee's location."""
         employee = self.cleaned_data.get('employee') or self.employee
-        holiday_filters = Q(date=holiday_date)
-        if holiday_types:
-            holiday_filters &= Q(holiday_type__in=holiday_types)
-
         location = _location_name(getattr(employee, 'location', '')) if employee else ''
-        if location:
-            holiday_filters &= Q(location=location) | Q(location='')
-
-        return Holiday.objects.filter(holiday_filters).exists()
+        return _holiday_exists_for_location(holiday_date, holiday_types, location)
 
     class Meta:
         model = CompOff
@@ -314,12 +336,13 @@ class PasswordResetSelectionForm(forms.Form):
 class TimesheetImportForm(forms.Form):
     """Form for importing timesheet XLSX files"""
     import_date = forms.DateField(
-        label='Timesheet For (Date)',
-        widget=forms.DateInput(attrs={
+        label='Import Month',
+        input_formats=['%Y-%m', '%Y-%m-%d'],
+        widget=forms.DateInput(format='%Y-%m', attrs={
             'class': 'form-control',
-            'type': 'date',
+            'type': 'month',
         }),
-        help_text='Select the date/month this timesheet is for (e.g., last day of month)'
+        help_text='Select the month this timesheet data is for.'
     )
     file = forms.FileField(
         label='XLSX File',
@@ -355,11 +378,12 @@ class ClientTimesheetImportForm(forms.Form):
     """Form for importing client timesheet entries from XLSX files."""
     import_date = forms.DateField(
         label='Import Month',
-        widget=forms.DateInput(attrs={
+        input_formats=['%Y-%m', '%Y-%m-%d'],
+        widget=forms.DateInput(format='%Y-%m', attrs={
             'class': 'form-control',
-            'type': 'date',
+            'type': 'month',
         }),
-        help_text='Select the month/date this client timesheet is for.'
+        help_text='Select the month this client timesheet is for.'
     )
     file = forms.FileField(
         label='Client Timesheet XLSX File',
@@ -470,15 +494,8 @@ class TimesheetEntryForm(forms.ModelForm):
         """Prevent timesheet entries from being created on special holidays."""
         entry_date = self.cleaned_data.get('date')
         if entry_date:
-            holiday_filters = Q(
-                date=entry_date,
-                holiday_type='SPECIAL_HOLIDAY'
-            )
             location = _location_name(getattr(self.employee, 'location', ''))
-            if location:
-                holiday_filters &= Q(location=location) | Q(location='')
-
-            if Holiday.objects.filter(holiday_filters).exists():
+            if _holiday_exists_for_location(entry_date, ['SPECIAL_HOLIDAY'], location):
                 raise forms.ValidationError(
                     'Timesheet entries are not allowed on special holidays.'
                 )

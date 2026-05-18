@@ -305,6 +305,31 @@ def get_location_holiday_filter(location):
     return Q()
 
 
+def holiday_applies_to_location(holiday, location):
+    """Return whether a holiday applies to a location.
+
+    Holiday.location can be blank for global holidays or comma-separated for
+    multiple applicable locations.
+    """
+    holiday_location = str(getattr(holiday, 'location', '') or '').strip()
+    if not holiday_location or not location:
+        return True
+
+    location = str(location).strip().lower()
+    holiday_locations = [
+        item.strip().lower()
+        for item in holiday_location.split(',')
+        if item.strip()
+    ]
+    return location in holiday_locations
+
+
+def holiday_exists_for_location(date_obj, holiday_types, location):
+    """Return whether a date has a holiday applicable to the given location."""
+    holidays = Holiday.objects.filter(date=date_obj, holiday_type__in=holiday_types)
+    return any(holiday_applies_to_location(holiday, location) for holiday in holidays)
+
+
 def is_holiday_date(date_obj, employee=None, exclude_special=False):
     """Check if date is a holiday.
     
@@ -317,12 +342,11 @@ def is_holiday_date(date_obj, employee=None, exclude_special=False):
     if not exclude_special:
         holiday_types.append('SPECIAL_HOLIDAY')
 
-    holiday_filters = Q(
-        date=date_obj,
-        holiday_type__in=holiday_types
-    ) & get_location_holiday_filter(get_employee_location_name(employee))
-
-    return Holiday.objects.filter(holiday_filters).exists()
+    return holiday_exists_for_location(
+        date_obj,
+        holiday_types,
+        get_employee_location_name(employee)
+    )
 
 
 def is_weekend_or_fixed_holiday(date_obj, employee=None):
@@ -334,12 +358,11 @@ def is_weekend_or_fixed_holiday(date_obj, employee=None):
     if date_obj.weekday() >= 5:
         return True
     
-    holiday_filters = Q(
-        date=date_obj,
-        holiday_type='PUBLIC_HOLIDAY'
-    ) & get_location_holiday_filter(get_employee_location_name(employee))
-
-    return Holiday.objects.filter(holiday_filters).exists()
+    return holiday_exists_for_location(
+        date_obj,
+        ['PUBLIC_HOLIDAY'],
+        get_employee_location_name(employee)
+    )
 
 
 def get_date_type(date_obj, employee=None):
@@ -352,8 +375,14 @@ def get_date_type(date_obj, employee=None):
     """
     if date_obj.weekday() >= 5:
         return 'Weekend'
-    holiday_filters = Q(date=date_obj) & get_location_holiday_filter(get_employee_location_name(employee))
-    holiday = Holiday.objects.filter(holiday_filters).first()
+    location = get_employee_location_name(employee)
+    holiday = next(
+        (
+            holiday for holiday in Holiday.objects.filter(date=date_obj)
+            if holiday_applies_to_location(holiday, location)
+        ),
+        None
+    )
     if holiday:
         return holiday.get_holiday_type_display()
     return ''
@@ -1983,11 +2012,11 @@ def generate_timesheet_weekdays(request):
         weekday = current.weekday()
         if weekday in days_to_include:
             # Skip holidays (PUBLIC_HOLIDAY, SPECIAL_HOLIDAY)
-            holiday_filters = Q(
-                date=current,
-                holiday_type__in=['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY']
-            ) & get_location_holiday_filter(get_employee_location_name(employee))
-            is_blocked_holiday = Holiday.objects.filter(holiday_filters).exists()
+            is_blocked_holiday = holiday_exists_for_location(
+                current,
+                ['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY'],
+                get_employee_location_name(employee)
+            )
             
             if not is_blocked_holiday:
                 # Avoid duplicates

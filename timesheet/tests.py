@@ -11,10 +11,10 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from openpyxl import Workbook
 
-from timesheet.forms import TimesheetEntryForm
+from timesheet.forms import TimesheetEntryForm, TimesheetImportForm
 from timesheet.utils import import_client_timesheet_entries, import_employee_file
 
-from timesheet.models import CompOff, Employee, Holiday, Location, Project, TimesheetEntry
+from timesheet.models import CompOff, Employee, Holiday, Location, Project, TimesheetEntry, TimesheetImportLog
 
 
 def get_location(name):
@@ -396,6 +396,23 @@ class EmployeeProjectSelectionTests(TestCase):
         self.assertEqual(response.status_code, 302)
 
 
+class TimesheetImportFormTests(TestCase):
+    def test_import_month_accepts_year_month_value(self):
+        upload = SimpleUploadedFile(
+            'timesheet.xlsx',
+            b'dummy',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        form = TimesheetImportForm(
+            data={'import_date': '2026-04', 'notes': ''},
+            files={'file': upload}
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['import_date'], date(2026, 4, 1))
+
+
 class ClientReportingRulesTests(TestCase):
     def setUp(self):
         self.admin_user = User.objects.create_user(
@@ -758,7 +775,7 @@ class ClientTimesheetImportTests(TestCase):
             name='Holiday',
             date=date(2026, 4, 3),
             holiday_type='PUBLIC_HOLIDAY',
-            location='Indore',
+            location='Pune, Indore, Chennai',
         )
         file_obj = self._build_matrix_workbook_file([
             ['2026-04-03', 8, 0],
@@ -941,7 +958,7 @@ class ClientTimesheetImportTests(TestCase):
             reverse('import_client_timesheet_entries'),
             {
                 'file': upload,
-                'import_date': '2026-04-30',
+                'import_date': '2026-04',
                 'notes': 'April client import',
                 'overwrite_drafts': 'on',
             },
@@ -950,3 +967,29 @@ class ClientTimesheetImportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('result', response.context)
         self.assertTrue(TimesheetEntry.objects.filter(employee=self.employee).exists())
+
+    def test_client_import_month_accepts_year_month_value(self):
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-01', 8, 0],
+        ])
+        upload = SimpleUploadedFile(
+            'client_timesheet.xlsx',
+            file_obj.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        self.client.login(username='admin_import', password='testpass123')
+        response = self.client.post(
+            reverse('import_client_timesheet_entries'),
+            {
+                'file': upload,
+                'import_date': '2026-04',
+                'notes': 'April client import',
+                'overwrite_drafts': 'on',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TimesheetImportLog.objects.filter(import_date=date(2026, 4, 1)).exists()
+        )
