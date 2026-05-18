@@ -2155,6 +2155,8 @@ def import_client_timesheet_entries(request):
                         f"Created: {result['created_count']}\n"
                         f"Updated: {result['updated_count']}\n"
                         f"Skipped: {result['skipped_count']}\n"
+                        f"CompOffs created: {result.get('compoff_created_count', 0)}\n"
+                        f"Pending CompOffs removed: {result.get('compoff_deleted_count', 0)}\n"
                         f"{notes}"
                     ).strip()
                 )
@@ -2168,7 +2170,8 @@ def import_client_timesheet_entries(request):
                     f"Client timesheet import completed. "
                     f"Created {result['created_count']}, updated {result['updated_count']}, "
                     f"skipped {result['skipped_count']} entries, "
-                    f"created {result.get('compoff_created_count', 0)} CompOff(s)."
+                    f"created {result.get('compoff_created_count', 0)} CompOff(s), "
+                    f"removed {result.get('compoff_deleted_count', 0)} pending CompOff(s)."
                 )
                 return render(
                     request,

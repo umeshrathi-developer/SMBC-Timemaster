@@ -776,7 +776,7 @@ class ClientTimesheetImportTests(TestCase):
             ).exists()
         )
 
-    def test_import_client_timesheet_matrix_creates_only_non_zero_configured_status_entries(self):
+    def test_import_client_timesheet_matrix_imports_zero_and_blank_cells_as_zero_hours(self):
         file_obj = self._build_matrix_workbook_file([
             ['01-Apr-2026', 8, 0],
             ['02-Apr-2026', None, 6],
@@ -785,10 +785,10 @@ class ClientTimesheetImportTests(TestCase):
         result = import_client_timesheet_entries(file_obj)
 
         self.assertTrue(result['success'])
-        self.assertEqual(result['created_count'], 2)
-        self.assertEqual(result['skipped_count'], 2)
-        self.assertEqual(len(result['skipped_records']), 2)
-        self.assertTrue(result['exception_report_path'])
+        self.assertEqual(result['created_count'], 4)
+        self.assertEqual(result['skipped_count'], 0)
+        self.assertEqual(len(result['skipped_records']), 0)
+        self.assertFalse(result['exception_report_path'])
         self.assertTrue(
             TimesheetEntry.objects.filter(
                 employee=self.employee,
@@ -805,10 +805,75 @@ class ClientTimesheetImportTests(TestCase):
                 status='SUBMITTED',
             ).exists()
         )
-        self.assertFalse(
+        self.assertTrue(
             TimesheetEntry.objects.filter(
                 employee=self.second_employee,
                 date=date(2026, 4, 1),
+                hours=0,
+                status='SUBMITTED',
+            ).exists()
+        )
+        self.assertTrue(
+            TimesheetEntry.objects.filter(
+                employee=self.employee,
+                date=date(2026, 4, 2),
+                hours=0,
+                status='SUBMITTED',
+            ).exists()
+        )
+
+    def test_import_client_timesheet_overwrites_submitted_entry(self):
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 1),
+            project='Risk Tech',
+            hours=4,
+            comments='Existing submitted',
+            status='SUBMITTED',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-01', 8, 0],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['updated_count'], 1)
+        entry = TimesheetEntry.objects.get(employee=self.employee, date=date(2026, 4, 1))
+        self.assertEqual(entry.hours, 8)
+        self.assertEqual(entry.status, 'SUBMITTED')
+
+    def test_import_client_timesheet_blank_cell_clears_existing_hours_and_pending_compoff(self):
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 4),
+            project='Risk Tech',
+            hours=8,
+            comments='Existing submitted',
+            status='SUBMITTED',
+        )
+        CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 4),
+            status='PENDING',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-04', None, 0],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['updated_count'], 1)
+        self.assertEqual(result['compoff_deleted_count'], 1)
+        entry = TimesheetEntry.objects.get(employee=self.employee, date=date(2026, 4, 4))
+        self.assertEqual(entry.hours, 0)
+        self.assertEqual(entry.status, 'SUBMITTED')
+        self.assertFalse(
+            CompOff.objects.filter(
+                employee=self.employee,
+                working_date=date(2026, 4, 4),
+                status='PENDING',
             ).exists()
         )
 

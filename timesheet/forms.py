@@ -380,13 +380,13 @@ class ClientTimesheetImportForm(forms.Form):
         help_text='Optional notes about this import'
     )
     overwrite_drafts = forms.BooleanField(
-        label='Update existing draft entries',
+        label='Replace existing entries from this file',
         required=False,
         initial=True,
         widget=forms.CheckboxInput(attrs={
             'class': 'form-check-input',
         }),
-        help_text='When checked, matching DRAFT entries are updated. SUBMITTED entries are never overwritten.'
+        help_text='Client timesheet imports are authoritative. Matching existing entries, including SUBMITTED entries, are updated from the uploaded file.'
     )
 
     def clean_file(self):

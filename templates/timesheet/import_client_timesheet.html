@@ -105,28 +105,40 @@
             </div>
             <div class="card-body">
                 <div class="row g-3 mb-3">
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="border rounded p-3">
                             <div class="text-muted small">Created</div>
                             <strong>{{ result.created_count }}</strong>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="border rounded p-3">
                             <div class="text-muted small">Updated</div>
                             <strong>{{ result.updated_count }}</strong>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="border rounded p-3">
                             <div class="text-muted small">Skipped</div>
                             <strong>{{ result.skipped_count }}</strong>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="border rounded p-3">
                             <div class="text-muted small">Failed</div>
                             <strong>{{ result.failed_records|length }}</strong>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">CompOff Created</div>
+                            <strong>{{ result.compoff_created_count|default:0 }}</strong>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="border rounded p-3">
+                            <div class="text-muted small">CompOff Removed</div>
+                            <strong>{{ result.compoff_deleted_count|default:0 }}</strong>
                         </div>
                     </div>
                 </div>
@@ -246,9 +258,9 @@
                     <li>Row 3 onward contains the daily date and employee hour cells.</li>
                     <li>Employee headers can be employee name, employee ID, or <strong>Name (Employee ID)</strong>.</li>
                     <li><strong>Date</strong> supports YYYY-MM-DD, DD-MMM-YYYY, DD-MM-YYYY, DD/MM/YYYY, or Excel date cells.</li>
-                    <li>Blank cells and zero values are skipped. Values greater than zero create or update entries in <strong>{{ client_import_status }}</strong>.</li>
+                    <li>Every employee/date cell in the uploaded file is authoritative. Blank and zero values create or update entries as <strong>0</strong> hours.</li>
                     <li>The employee's assigned project is used for the timesheet entry.</li>
-                    <li>Existing SUBMITTED entries are skipped to avoid changing approved timesheets.</li>
+                    <li>Existing entries, including <strong>SUBMITTED</strong> entries, are replaced from the uploaded file.</li>
                 </ul>
             </div>
         </div>

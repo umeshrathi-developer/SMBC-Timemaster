@@ -167,6 +167,26 @@ def _create_import_compoff_if_eligible(entry, results):
     results['compoff_created_count'] += 1
 
 
+def _delete_pending_import_compoff_if_ineligible(entry, results):
+    """Remove an unused pending CompOff when an authoritative import clears eligibility."""
+    if entry.status == 'SUBMITTED' and entry.hours >= 8 and _is_weekend_or_public_holiday(entry.date, entry.employee):
+        return
+
+    deleted_count = CompOff.objects.filter(
+        employee=entry.employee,
+        working_date=entry.date,
+        status='PENDING',
+        compoff_date__isnull=True,
+    ).delete()[0]
+    results['compoff_deleted_count'] += deleted_count
+
+
+def _sync_import_compoff(entry, results):
+    """Keep pending CompOffs aligned with the imported cell value."""
+    _delete_pending_import_compoff_if_ineligible(entry, results)
+    _create_import_compoff_if_eligible(entry, results)
+
+
 def _build_employee_lookup():
     """Build a lookup for employee id, email, and display name headers."""
     lookup = {}
@@ -458,15 +478,13 @@ def _save_client_timesheet_entry(
     employee, entry_date, hours, overwrite_drafts, results, comments='',
     row_idx='', column_letter='', employee_header='', raw_hours=''
 ):
-    """Create or update one imported client timesheet cell."""
-    if hours <= 0:
-        results['skipped_count'] += 1
-        reason = 'Blank hours cell' if raw_hours in (None, '') else 'Hours is zero or less'
-        _record_client_import_issue(
-            results, 'skipped', row_idx, column_letter, employee_header,
-            employee=employee, entry_date=entry_date, hours=raw_hours, reason=reason
-        )
-        return
+    """Create or update one imported client timesheet cell.
+
+    Client imports are authoritative for every employee/date cell they contain,
+    including blank and zero-hour cells.
+    """
+    if hours < 0:
+        raise ValueError('Hours must be between 0 and 12.')
     if hours > 12:
         raise ValueError('Hours must be between 0 and 12.')
     if not employee.project:
@@ -480,24 +498,11 @@ def _save_client_timesheet_entry(
     ).first()
 
     if existing_entry:
-        if existing_entry.status == 'SUBMITTED' or not overwrite_drafts:
-            results['skipped_count'] += 1
-            reason = (
-                'Existing entry is SUBMITTED'
-                if existing_entry.status == 'SUBMITTED'
-                else 'Existing draft entry was not overwritten'
-            )
-            _record_client_import_issue(
-                results, 'skipped', row_idx, column_letter, employee_header,
-                employee=employee, entry_date=entry_date, hours=raw_hours, reason=reason
-            )
-            return
-
         existing_entry.hours = hours
         existing_entry.comments = comments
         existing_entry.status = results['import_status']
         existing_entry.save()
-        _create_import_compoff_if_eligible(existing_entry, results)
+        _sync_import_compoff(existing_entry, results)
         results['updated_count'] += 1
         return
 
@@ -509,7 +514,7 @@ def _save_client_timesheet_entry(
         comments=comments,
         status=results['import_status']
     )
-    _create_import_compoff_if_eligible(entry, results)
+    _sync_import_compoff(entry, results)
     results['created_count'] += 1
 
 
@@ -665,6 +670,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             'exception_report_path': '',
             'import_status': _get_client_timesheet_import_status(),
             'compoff_created_count': 0,
+            'compoff_deleted_count': 0,
         }
 
         header_row = next(worksheet.iter_rows(min_row=2, max_row=2, values_only=True), None)
@@ -750,7 +756,8 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             import_logger.info(
                 f"Client timesheet import completed. Created={results['created_count']}, "
                 f"Updated={results['updated_count']}, Skipped={results['skipped_count']}, "
-                f"CompOffsCreated={results['compoff_created_count']}"
+                f"CompOffsCreated={results['compoff_created_count']}, "
+                f"CompOffsDeleted={results['compoff_deleted_count']}"
             )
 
         results['exception_report_path'] = _write_client_import_exception_report(results)
@@ -778,6 +785,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             'exception_report_path': '',
             'import_status': getattr(settings, 'CLIENT_TIMESHEET_IMPORT_STATUS', 'DRAFT'),
             'compoff_created_count': 0,
+            'compoff_deleted_count': 0,
         }
     finally:
         if workbook:
