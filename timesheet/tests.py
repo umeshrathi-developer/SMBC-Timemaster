@@ -351,6 +351,38 @@ class EmployeeProjectSelectionTests(TestCase):
             ).exists()
         )
 
+    def test_admin_edit_submitted_timesheet_to_zero_marks_pending_compoff_taken(self):
+        entry = TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 6),
+            project='Risk Tech',
+            hours=8,
+            comments='Submitted hours',
+            status='SUBMITTED',
+        )
+        compoff = CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 4),
+            status='PENDING',
+            notes='Weekend work',
+        )
+
+        self.client.login(username='admin_timesheet', password='testpass123')
+        response = self.client.post(
+            reverse('timesheet_entry_edit', args=[entry.pk]) + f'?month=2026-04&employee={self.employee.pk}',
+            {
+                'date': '2026-04-06',
+                'project': 'Risk Tech',
+                'hours': '0',
+                'comments': 'Admin correction',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        compoff.refresh_from_db()
+        self.assertEqual(compoff.status, 'TAKEN')
+        self.assertEqual(compoff.compoff_date, date(2026, 4, 6))
+
     def test_admin_can_delete_submitted_timesheet_and_pending_compoff(self):
         entry = TimesheetEntry.objects.create(
             employee=self.employee,
@@ -380,6 +412,30 @@ class EmployeeProjectSelectionTests(TestCase):
                 status='PENDING',
             ).exists()
         )
+
+    def test_admin_delete_submitted_weekday_timesheet_marks_pending_compoff_taken(self):
+        entry = TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 6),
+            project='Risk Tech',
+            hours=8,
+            status='SUBMITTED',
+        )
+        compoff = CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 4),
+            status='PENDING',
+            notes='Weekend work',
+        )
+
+        self.client.login(username='admin_timesheet', password='testpass123')
+        response = self.client.delete(reverse('timesheet_entry_delete', args=[entry.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        compoff.refresh_from_db()
+        self.assertEqual(compoff.status, 'TAKEN')
+        self.assertEqual(compoff.compoff_date, date(2026, 4, 6))
+
 
     def test_employee_cannot_edit_submitted_timesheet(self):
         entry = TimesheetEntry.objects.create(
@@ -893,6 +949,25 @@ class ClientTimesheetImportTests(TestCase):
                 status='PENDING',
             ).exists()
         )
+
+    def test_import_client_timesheet_zero_weekday_marks_pending_compoff_taken(self):
+        compoff = CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 4),
+            status='PENDING',
+            notes='Weekend work',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-06', 0, 8],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['compoff_taken_count'], 1)
+        compoff.refresh_from_db()
+        self.assertEqual(compoff.status, 'TAKEN')
+        self.assertEqual(compoff.compoff_date, date(2026, 4, 6))
 
     @override_settings(CLIENT_TIMESHEET_IMPORT_STATUS='DRAFT')
     def test_import_client_timesheet_status_can_be_configured(self):

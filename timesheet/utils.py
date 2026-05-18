@@ -204,6 +204,68 @@ def _sync_import_compoff(entry, results):
     _create_import_compoff_if_eligible(entry, results)
 
 
+def _is_import_workday_for_compoff_use(entry_date, employee):
+    """Return whether a date can use a pending CompOff in lieu of hours."""
+    if entry_date.weekday() >= 5:
+        return False
+
+    location = _get_employee_location_name(employee)
+    holidays = Holiday.objects.filter(
+        date=entry_date,
+        holiday_type__in=['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY']
+    )
+    return not any(_holiday_applies_to_location(holiday, location) for holiday in holidays)
+
+
+def _has_positive_submitted_hours(employee, entry_date):
+    """Return whether an employee has submitted positive hours for a date."""
+    return TimesheetEntry.objects.filter(
+        employee=employee,
+        date=entry_date,
+        status='SUBMITTED',
+        hours__gt=0,
+    ).exists()
+
+
+def _auto_apply_pending_compoffs_for_import(results):
+    """Mark pending CompOffs as taken for imported weekday zero/blank days."""
+    if results.get('import_status') != 'SUBMITTED':
+        return
+
+    affected = results.get('_affected_employee_dates', set())
+    if not affected:
+        return
+
+    employee_ids = {employee_id for employee_id, _ in affected}
+    employees = {
+        employee.id: employee
+        for employee in Employee.objects.filter(id__in=employee_ids).select_related('location')
+    }
+
+    for employee_id, entry_date in sorted(affected, key=lambda item: (item[0], item[1])):
+        employee = employees.get(employee_id)
+        if not employee:
+            continue
+        if not _is_import_workday_for_compoff_use(entry_date, employee):
+            continue
+        if _has_positive_submitted_hours(employee, entry_date):
+            continue
+        if CompOff.objects.filter(employee=employee, status='TAKEN', compoff_date=entry_date).exists():
+            continue
+
+        oldest_compoff = CompOff.objects.filter(
+            employee=employee,
+            status='PENDING',
+            compoff_date__isnull=True,
+            working_date__lte=entry_date,
+        ).order_by('created_date').first()
+        if oldest_compoff:
+            oldest_compoff.compoff_date = entry_date
+            oldest_compoff.status = 'TAKEN'
+            oldest_compoff.save()
+            results['compoff_taken_count'] += 1
+
+
 def _build_employee_lookup():
     """Build a lookup for employee id, email, and display name headers."""
     lookup = {}
@@ -520,6 +582,7 @@ def _save_client_timesheet_entry(
         existing_entry.status = results['import_status']
         existing_entry.save()
         _sync_import_compoff(existing_entry, results)
+        results['_affected_employee_dates'].add((existing_entry.employee_id, existing_entry.date))
         results['updated_count'] += 1
         return
 
@@ -532,11 +595,13 @@ def _save_client_timesheet_entry(
         status=results['import_status']
     )
     _sync_import_compoff(entry, results)
+    results['_affected_employee_dates'].add((entry.employee_id, entry.date))
     results['created_count'] += 1
 
 
 def _import_client_timesheet_matrix(
-    worksheet, header_row, results, overwrite_drafts, data_start_row=2, header_row_number=1
+    worksheet, header_row, results, overwrite_drafts, data_start_row=2, header_row_number=1,
+    start_date=None, end_date=None
 ):
     """Import Date x Employee hour matrix: Date | Employee A | Employee B | ..."""
     employee_lookup = _build_employee_lookup()
@@ -575,6 +640,11 @@ def _import_client_timesheet_matrix(
             # Ignore report footer rows such as Billable Efforts or Accrual rows.
             continue
 
+        # If a start/end date range is provided, skip any rows outside it.
+        if start_date and end_date:
+            if entry_date < start_date or entry_date > end_date:
+                continue
+
         for column_index, employee, employee_header in employee_columns:
             raw_hours = row[column_index] if column_index < len(row) else None
             column_letter = get_column_letter(column_index + 1)
@@ -602,7 +672,7 @@ def _import_client_timesheet_matrix(
     return True
 
 
-def _import_client_timesheet_rows(worksheet, header_map, results, overwrite_drafts, data_start_row=2):
+def _import_client_timesheet_rows(worksheet, header_map, results, overwrite_drafts, data_start_row=2, start_date=None, end_date=None):
     """Compatibility import for employee/date/hours row-based sheets."""
     employee_lookup = _build_employee_lookup()
     employee_key = 'employee_id' if 'employee_id' in header_map else 'email'
@@ -630,6 +700,10 @@ def _import_client_timesheet_rows(worksheet, header_map, results, overwrite_draf
                 raise ValueError(f'Active employee not found for {employee_key} "{lookup_value}".')
 
             entry_date = _parse_excel_date(row[header_map['date']])
+            # Skip rows outside provided date range
+            if start_date is not None and end_date is not None:
+                if entry_date < start_date or entry_date > end_date:
+                    continue
             raw_hours = row[header_map['hours']]
             hours = _parse_hours(raw_hours)
             comments = ''
@@ -657,7 +731,7 @@ def _import_client_timesheet_rows(worksheet, header_map, results, overwrite_draf
             )
 
 
-def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date=None, notes=''):
+def import_client_timesheet_entries(file_obj, overwrite_drafts=True, start_date=None, end_date=None, notes=''):
     """
     Import client timesheet entries from an XLSX file.
 
@@ -688,6 +762,8 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             'import_status': _get_client_timesheet_import_status(),
             'compoff_created_count': 0,
             'compoff_deleted_count': 0,
+            'compoff_taken_count': 0,
+            '_affected_employee_dates': set(),
         }
 
         header_row = next(worksheet.iter_rows(min_row=2, max_row=2, values_only=True), None)
@@ -722,17 +798,20 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
 
         if is_row_based_format:
             _import_client_timesheet_rows(
-                worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row
+                worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row,
+                start_date=start_date, end_date=end_date
             )
         elif 'date' in header_map:
             imported = _import_client_timesheet_matrix(
                 worksheet, header_row, results, overwrite_drafts,
                 data_start_row=data_start_row,
-                header_row_number=header_row_number
+                header_row_number=header_row_number,
+                start_date=start_date, end_date=end_date
             )
             if not imported:
                 _import_client_timesheet_rows(
-                    worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row
+                    worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row,
+                    start_date=start_date, end_date=end_date
                 )
         else:
             fallback_header_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
@@ -748,22 +827,28 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             )
             if fallback_is_row_based_format:
                 _import_client_timesheet_rows(
-                    worksheet, fallback_header_map, results, overwrite_drafts, data_start_row=2
+                    worksheet, fallback_header_map, results, overwrite_drafts, data_start_row=2,
+                    start_date=start_date, end_date=end_date
                 )
             elif 'date' in fallback_header_map:
                 imported = _import_client_timesheet_matrix(
                     worksheet, fallback_header_row or [], results, overwrite_drafts,
                     data_start_row=2,
-                    header_row_number=1
+                    header_row_number=1,
+                    start_date=start_date, end_date=end_date
                 )
                 if not imported:
                     _import_client_timesheet_rows(
-                        worksheet, fallback_header_map, results, overwrite_drafts, data_start_row=2
+                        worksheet, fallback_header_map, results, overwrite_drafts, data_start_row=2,
+                        start_date=start_date, end_date=end_date
                     )
             else:
                 _import_client_timesheet_rows(
-                    worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row
+                    worksheet, header_map, results, overwrite_drafts, data_start_row=data_start_row,
+                    start_date=start_date, end_date=end_date
                 )
+
+        _auto_apply_pending_compoffs_for_import(results)
 
         if results['errors']:
             results['success'] = False
@@ -774,10 +859,12 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
                 f"Client timesheet import completed. Created={results['created_count']}, "
                 f"Updated={results['updated_count']}, Skipped={results['skipped_count']}, "
                 f"CompOffsCreated={results['compoff_created_count']}, "
-                f"CompOffsDeleted={results['compoff_deleted_count']}"
+                f"CompOffsDeleted={results['compoff_deleted_count']}, "
+                f"CompOffsTaken={results['compoff_taken_count']}"
             )
 
         results['exception_report_path'] = _write_client_import_exception_report(results)
+        results.pop('_affected_employee_dates', None)
         return results
     except Exception as exc:
         import_logger.error(f"Failed to import client timesheet file: {str(exc)}", exc_info=True)
@@ -803,6 +890,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             'import_status': getattr(settings, 'CLIENT_TIMESHEET_IMPORT_STATUS', 'DRAFT'),
             'compoff_created_count': 0,
             'compoff_deleted_count': 0,
+            'compoff_taken_count': 0,
         }
     finally:
         if workbook:

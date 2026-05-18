@@ -376,14 +376,23 @@ class TimesheetImportForm(forms.Form):
 
 class ClientTimesheetImportForm(forms.Form):
     """Form for importing client timesheet entries from XLSX files."""
-    import_date = forms.DateField(
-        label='Import Month',
-        input_formats=['%Y-%m', '%Y-%m-%d'],
-        widget=forms.DateInput(format='%Y-%m', attrs={
+    start_date = forms.DateField(
+        label='Start Date',
+        input_formats=['%Y-%m-%d'],
+        widget=forms.DateInput(format='%Y-%m-%d', attrs={
             'class': 'form-control',
-            'type': 'month',
+            'type': 'date',
         }),
-        help_text='Select the month this client timesheet is for.'
+        help_text='Start date for the timesheet import (inclusive).'
+    )
+    end_date = forms.DateField(
+        label='End Date',
+        input_formats=['%Y-%m-%d'],
+        widget=forms.DateInput(format='%Y-%m-%d', attrs={
+            'class': 'form-control',
+            'type': 'date',
+        }),
+        help_text='End date for the timesheet import (inclusive).'
     )
     file = forms.FileField(
         label='Client Timesheet XLSX File',
@@ -412,6 +421,16 @@ class ClientTimesheetImportForm(forms.Form):
         }),
         help_text='Client timesheet imports are authoritative. Matching existing entries, including SUBMITTED entries, are updated from the uploaded file.'
     )
+
+    def clean(self):
+        cleaned = super().clean()
+        start = cleaned.get('start_date')
+        end = cleaned.get('end_date')
+        if not start or not end:
+            raise forms.ValidationError('Both start date and end date are required for client timesheet import.')
+        if end < start:
+            raise forms.ValidationError('End date cannot be before start date.')
+        return cleaned
 
     def clean_file(self):
         """Validate file is an Excel file."""

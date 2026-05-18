@@ -414,13 +414,15 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
         if current.weekday() < 5:
             # Check if it's a holiday (PUBLIC_HOLIDAY or SPECIAL_HOLIDAY)
             if not is_holiday_date(current, employee=employee, exclude_special=True):
-                # Check if employee has any timesheet entry for this date
-                has_entry = TimesheetEntry.objects.filter(
+                # Check if employee has any submitted positive hours for this date.
+                has_positive_submitted_hours = TimesheetEntry.objects.filter(
                     employee=employee,
-                    date=current
+                    date=current,
+                    status='SUBMITTED',
+                    hours__gt=0,
                 ).exists()
                 
-                if not has_entry:
+                if not has_positive_submitted_hours:
                     missing_dates.append(current)
         
         current += timedelta(days=1)
@@ -449,7 +451,7 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
 def auto_deduct_compoff_for_missing_weekdays_in_range(employee, from_date, to_date):
     """Mark PENDING CompOffs as TAKEN for missing weekday entries in a date range.
     
-    For each weekday (Mon-Fri) with no timesheet entry, deduct one PENDING CompOff.
+    For each weekday (Mon-Fri) with no submitted positive hours, deduct one PENDING CompOff.
     """
     # Find missing weekdays in the range
     missing_dates = []
@@ -457,13 +459,23 @@ def auto_deduct_compoff_for_missing_weekdays_in_range(employee, from_date, to_da
     
     while current <= to_date:
         if current.weekday() < 5 and not is_holiday_date(current, employee=employee, exclude_special=False):
-            if not TimesheetEntry.objects.filter(employee=employee, date=current).exists():
+            has_positive_submitted_hours = TimesheetEntry.objects.filter(
+                employee=employee,
+                date=current,
+                status='SUBMITTED',
+                hours__gt=0,
+            ).exists()
+            if not has_positive_submitted_hours:
                 missing_dates.append(current)
         current += timedelta(days=1)
     
     # For each missing date, deduct the oldest PENDING CompOff
     compoff_deducted = 0
     for missing_date in missing_dates:
+        # Get oldest PENDING Comp-Off for this employee
+        if CompOff.objects.filter(employee=employee, status='TAKEN', compoff_date=missing_date).exists():
+            continue
+
         # Get oldest PENDING Comp-Off for this employee
         oldest_compoff = CompOff.objects.filter(
             employee=employee,
@@ -526,7 +538,11 @@ def create_compoff_for_submitted_entry_if_eligible(entry):
 def sync_compoff_after_timesheet_correction(entry, original_employee, original_date):
     """Keep pending CompOff records aligned after an admin correction."""
     delete_pending_compoff_for_workday(original_employee, original_date)
-    return create_compoff_for_submitted_entry_if_eligible(entry)
+    created = create_compoff_for_submitted_entry_if_eligible(entry)
+    auto_deduct_compoff_for_missing_weekdays_in_range(entry.employee, entry.date, entry.date)
+    if original_employee != entry.employee or original_date != entry.date:
+        auto_deduct_compoff_for_missing_weekdays_in_range(original_employee, original_date, original_date)
+    return created
 
 
 
@@ -1774,15 +1790,26 @@ def timesheet_entry_delete(request, pk):
     
     date_str = entry.date.strftime('%Y-%m-%d')
     deleted_compoffs = 0
+    correction_employee = entry.employee
+    correction_date = entry.date
     if admin:
         deleted_compoffs = delete_pending_compoff_for_workday(entry.employee, entry.date)
     
     # Delete the timesheet entry
     entry.delete()
+    compoffs_taken = 0
+    if admin:
+        compoffs_taken = auto_deduct_compoff_for_missing_weekdays_in_range(
+            correction_employee,
+            correction_date,
+            correction_date
+        )
 
     message = f'Entry for {date_str} deleted successfully!'
     if deleted_compoffs:
         message += f' Removed {deleted_compoffs} pending CompOff.'
+    if compoffs_taken:
+        message += f' Marked {compoffs_taken} pending CompOff as taken.'
     return JsonResponse({'success': True, 'message': message})
 
 
@@ -2163,13 +2190,15 @@ def import_client_timesheet_entries(request):
         form = ClientTimesheetImportForm(request.POST, request.FILES)
         if form.is_valid():
             uploaded_file = form.cleaned_data['file']
-            import_date = form.cleaned_data['import_date']
+            start_date = form.cleaned_data['start_date']
+            end_date = form.cleaned_data['end_date']
             notes = form.cleaned_data.get('notes', '')
             overwrite_drafts = form.cleaned_data['overwrite_drafts']
             result = import_entries(
                 uploaded_file,
                 overwrite_drafts=overwrite_drafts,
-                import_date=import_date,
+                start_date=start_date,
+                end_date=end_date,
                 notes=notes
             )
 
@@ -2177,15 +2206,17 @@ def import_client_timesheet_entries(request):
 
             if result['success']:
                 TimesheetImportLog.objects.create(
-                    import_date=import_date,
+                    import_date=start_date,
                     uploaded_by=request.user,
                     notes=(
                         f"Client Timesheet Import\n"
+                        f"Start: {start_date} End: {end_date}\n"
                         f"Created: {result['created_count']}\n"
                         f"Updated: {result['updated_count']}\n"
                         f"Skipped: {result['skipped_count']}\n"
                         f"CompOffs created: {result.get('compoff_created_count', 0)}\n"
                         f"Pending CompOffs removed: {result.get('compoff_deleted_count', 0)}\n"
+                        f"Pending CompOffs marked taken: {result.get('compoff_taken_count', 0)}\n"
                         f"{notes}"
                     ).strip()
                 )
@@ -2196,11 +2227,12 @@ def import_client_timesheet_entries(request):
                 )
                 messages.success(
                     request,
-                    f"Client timesheet import completed. "
+                    f"Client timesheet import completed for {start_date} to {end_date}. "
                     f"Created {result['created_count']}, updated {result['updated_count']}, "
                     f"skipped {result['skipped_count']} entries, "
                     f"created {result.get('compoff_created_count', 0)} CompOff(s), "
-                    f"removed {result.get('compoff_deleted_count', 0)} pending CompOff(s)."
+                    f"removed {result.get('compoff_deleted_count', 0)} pending CompOff(s), "
+                    f"marked {result.get('compoff_taken_count', 0)} pending CompOff(s) as taken."
                 )
                 return render(
                     request,
