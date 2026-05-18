@@ -10,9 +10,10 @@ import logging
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.db import transaction
+from django.db.models import Q
 from .models import (
     TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails,
-    Holiday, Employee, Project, Location, TimesheetEntry
+    Holiday, Employee, Project, Location, TimesheetEntry, CompOff
 )
 
 import_logger = logging.getLogger('timesheet.import')
@@ -121,6 +122,49 @@ def _get_client_timesheet_import_status():
             f"{', '.join(sorted(valid_statuses))}."
         )
     return status
+
+
+def _get_employee_location_name(employee):
+    """Return an employee location name for holiday matching."""
+    location = getattr(employee, 'location', None)
+    return getattr(location, 'name', location) or ''
+
+
+def _is_weekend_or_public_holiday(entry_date, employee):
+    """Return whether an imported entry is eligible for CompOff accrual."""
+    if entry_date.weekday() >= 5:
+        return True
+
+    holiday_filters = Q(
+        date=entry_date,
+        holiday_type='PUBLIC_HOLIDAY'
+    )
+    location = _get_employee_location_name(employee)
+    if location:
+        holiday_filters &= Q(location=location) | Q(location='')
+
+    return Holiday.objects.filter(holiday_filters).exists()
+
+
+def _create_import_compoff_if_eligible(entry, results):
+    """Create a pending CompOff for eligible imported submitted entries."""
+    if entry.status != 'SUBMITTED':
+        return
+    if entry.hours < 8:
+        return
+    if not _is_weekend_or_public_holiday(entry.date, entry.employee):
+        return
+    if CompOff.objects.filter(employee=entry.employee, working_date=entry.date).exists():
+        return
+
+    CompOff.objects.create(
+        employee=entry.employee,
+        working_date=entry.date,
+        compoff_date=None,
+        status='PENDING',
+        notes=f'Auto-generated Comp-Off from client timesheet import ({entry.date.strftime("%a, %b %d, %Y")})'
+    )
+    results['compoff_created_count'] += 1
 
 
 def _build_employee_lookup():
@@ -453,10 +497,11 @@ def _save_client_timesheet_entry(
         existing_entry.comments = comments
         existing_entry.status = results['import_status']
         existing_entry.save()
+        _create_import_compoff_if_eligible(existing_entry, results)
         results['updated_count'] += 1
         return
 
-    TimesheetEntry.objects.create(
+    entry = TimesheetEntry.objects.create(
         employee=employee,
         date=entry_date,
         project=project,
@@ -464,6 +509,7 @@ def _save_client_timesheet_entry(
         comments=comments,
         status=results['import_status']
     )
+    _create_import_compoff_if_eligible(entry, results)
     results['created_count'] += 1
 
 
@@ -618,6 +664,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             'failed_records': [],
             'exception_report_path': '',
             'import_status': _get_client_timesheet_import_status(),
+            'compoff_created_count': 0,
         }
 
         header_row = next(worksheet.iter_rows(min_row=2, max_row=2, values_only=True), None)
@@ -702,7 +749,8 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
         else:
             import_logger.info(
                 f"Client timesheet import completed. Created={results['created_count']}, "
-                f"Updated={results['updated_count']}, Skipped={results['skipped_count']}"
+                f"Updated={results['updated_count']}, Skipped={results['skipped_count']}, "
+                f"CompOffsCreated={results['compoff_created_count']}"
             )
 
         results['exception_report_path'] = _write_client_import_exception_report(results)
@@ -729,6 +777,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, import_date
             }],
             'exception_report_path': '',
             'import_status': getattr(settings, 'CLIENT_TIMESHEET_IMPORT_STATUS', 'DRAFT'),
+            'compoff_created_count': 0,
         }
     finally:
         if workbook:

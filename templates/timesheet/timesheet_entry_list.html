@@ -173,12 +173,12 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if entry.status == 'DRAFT' %}
+                            {% if entry.status == 'DRAFT' or is_admin %}
                             <div class="btn-group btn-group-sm" role="group">
-                                <a href="{% url 'timesheet_entry_edit' entry.pk %}?month={{ selected_month }}" class="btn btn-outline-primary" title="Edit">
+                                <a href="{% url 'timesheet_entry_edit' entry.pk %}?month={{ selected_month }}{% if is_admin %}&employee={{ selected_employee_id }}{% endif %}" class="btn btn-outline-primary" title="Edit">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-                                <button type="button" class="btn btn-outline-danger delete-entry-btn" data-entry-id="{{ entry.pk }}" title="Delete">
+                                <button type="button" class="btn btn-outline-danger delete-entry-btn" data-entry-id="{{ entry.pk }}" data-entry-status="{{ entry.status }}" title="Delete">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </div>
@@ -439,7 +439,11 @@
             button.addEventListener('click', function(e) {
                 e.preventDefault();
                 const entryId = this.getAttribute('data-entry-id');
+                const entryStatus = this.getAttribute('data-entry-status');
                 const row = this.closest('tr');
+                if (entryStatus === 'SUBMITTED' && !confirm('This is a submitted entry. Delete it as an admin correction?')) {
+                    return;
+                }
                 
                 // Send DELETE request via AJAX
                 fetch(`/timesheet/my-timesheet/${entryId}/delete/`, {

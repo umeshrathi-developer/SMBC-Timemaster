@@ -463,6 +463,43 @@ def has_submitted_entries_in_range(employee, from_date, to_date):
     ).exists()
 
 
+def delete_pending_compoff_for_workday(employee, working_date):
+    """Delete an unused pending CompOff for an edited/deleted submitted workday."""
+    return CompOff.objects.filter(
+        employee=employee,
+        working_date=working_date,
+        status='PENDING',
+        compoff_date__isnull=True,
+    ).delete()[0]
+
+
+def create_compoff_for_submitted_entry_if_eligible(entry):
+    """Create a pending CompOff for submitted weekend/public-holiday work."""
+    if entry.status != 'SUBMITTED':
+        return False
+    if entry.hours < 8:
+        return False
+    if not is_weekend_or_fixed_holiday(entry.date, employee=entry.employee):
+        return False
+    if CompOff.objects.filter(employee=entry.employee, working_date=entry.date).exists():
+        return False
+
+    CompOff.objects.create(
+        employee=entry.employee,
+        working_date=entry.date,
+        compoff_date=None,
+        status='PENDING',
+        notes=f'Auto-generated Comp-Off for working on weekend/holiday ({entry.date.strftime("%a, %b %d, %Y")})'
+    )
+    return True
+
+
+def sync_compoff_after_timesheet_correction(entry, original_employee, original_date):
+    """Keep pending CompOff records aligned after an admin correction."""
+    delete_pending_compoff_for_workday(original_employee, original_date)
+    return create_compoff_for_submitted_entry_if_eligible(entry)
+
+
 
 # ============ AUTHENTICATION VIEWS ============
 
@@ -1627,8 +1664,10 @@ def timesheet_entry_edit(request, pk):
             messages.error(request, 'Entry not found.')
             return redirect('timesheet_entry_list')
     
+    admin = is_admin(request.user)
+
     # Check if submitted
-    if entry.status == 'SUBMITTED':
+    if entry.status == 'SUBMITTED' and not admin:
         messages.error(request, 'Cannot edit submitted timesheet entries.')
         return redirect('timesheet_entry_list')
     
@@ -1636,9 +1675,13 @@ def timesheet_entry_edit(request, pk):
     selected_month = request.GET.get('month', '')
     
     if request.method == 'POST':
+        original_employee = entry.employee
+        original_date = entry.date
         form = TimesheetEntryForm(request.POST, instance=entry, employee=employee)
         if form.is_valid():
             updated_entry = form.save()
+            if admin:
+                sync_compoff_after_timesheet_correction(updated_entry, original_employee, original_date)
             
             messages.success(request, 'Timesheet entry updated successfully!')
             # Redirect to the same month the user was viewing
@@ -1666,7 +1709,8 @@ def timesheet_entry_edit(request, pk):
 def timesheet_entry_delete(request, pk):
     """Delete timesheet entry via AJAX
     
-    Only allows deletion of DRAFT (unsubmitted) entries.
+    Only allows employees to delete DRAFT entries. Admins can also delete submitted entries
+    for correction workflows.
     Admins can delete any employee's entry; regular users can only delete their own.
     CompOffs are only created at submission time, so no cleanup needed here.
     """
@@ -1676,7 +1720,9 @@ def timesheet_entry_delete(request, pk):
             status=403
         )
 
-    if is_admin(request.user):
+    admin = is_admin(request.user)
+
+    if admin:
         # Admin can delete any entry
         try:
             entry = TimesheetEntry.objects.get(pk=pk)
@@ -1694,15 +1740,21 @@ def timesheet_entry_delete(request, pk):
             return JsonResponse({'success': False, 'message': 'Entry not found.'}, status=404)
     
     # Check if submitted
-    if entry.status == 'SUBMITTED':
+    if entry.status == 'SUBMITTED' and not admin:
         return JsonResponse({'success': False, 'message': 'Cannot delete submitted entries.'}, status=400)
     
     date_str = entry.date.strftime('%Y-%m-%d')
+    deleted_compoffs = 0
+    if admin:
+        deleted_compoffs = delete_pending_compoff_for_workday(entry.employee, entry.date)
     
     # Delete the timesheet entry
     entry.delete()
-    
-    return JsonResponse({'success': True, 'message': f'Entry for {date_str} deleted successfully!'})
+
+    message = f'Entry for {date_str} deleted successfully!'
+    if deleted_compoffs:
+        message += f' Removed {deleted_compoffs} pending CompOff.'
+    return JsonResponse({'success': True, 'message': message})
 
 
 @login_required(login_url='login')
@@ -1814,18 +1866,9 @@ def timesheet_entry_submit(request):
         # Create CompOffs for eligible submitted entries (weekend/holiday with 8+ hours)
         compoff_created = 0
         for entry in entries_list:
-            if entry.status == 'SUBMITTED' and is_weekend_or_fixed_holiday(entry.date, employee=entry.employee) and entry.hours >= 8:
-                # Avoid duplicates - check if Comp-Off already exists
-                if not CompOff.objects.filter(employee=entry.employee, working_date=entry.date).exists():
-                    CompOff.objects.create(
-                        employee=entry.employee,
-                        working_date=entry.date,
-                        compoff_date=None,
-                        status='PENDING',
-                        notes=f'Auto-generated Comp-Off for working on weekend/holiday ({entry.date.strftime("%a, %b %d, %Y")})'
-                    )
-                    compoff_created += 1
-                    logger.info(f"Comp-Off auto-created for {entry.employee.name} on {entry.date}")
+            if create_compoff_for_submitted_entry_if_eligible(entry):
+                compoff_created += 1
+                logger.info(f"Comp-Off auto-created for {entry.employee.name} on {entry.date}")
         
         if compoff_created > 0:
             logger.info(f"{compoff_created} CompOff(s) created for working on weekend(s)/holiday(ies)")
@@ -2124,7 +2167,8 @@ def import_client_timesheet_entries(request):
                     request,
                     f"Client timesheet import completed. "
                     f"Created {result['created_count']}, updated {result['updated_count']}, "
-                    f"skipped {result['skipped_count']} entries."
+                    f"skipped {result['skipped_count']} entries, "
+                    f"created {result.get('compoff_created_count', 0)} CompOff(s)."
                 )
                 return render(
                     request,
