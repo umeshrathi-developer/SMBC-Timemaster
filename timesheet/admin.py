@@ -254,6 +254,7 @@ class TimesheetEntryAdmin(admin.ModelAdmin):
     search_fields = ['employee__name', 'project', 'comments']
     readonly_fields = ['created_date', 'updated_date']
     date_hierarchy = 'date'
+    actions = ['delete_selected_client_timesheet_entries']
     
     fieldsets = (
         ('Employee & Date', {
@@ -274,6 +275,29 @@ class TimesheetEntryAdmin(admin.ModelAdmin):
         }),
     )
     
+    def delete_selected_client_timesheet_entries(self, request, queryset):
+        """Delete selected client timesheet entries and cleanup pending CompOffs."""
+        deleted_count = queryset.count()
+        for entry in queryset:
+            CompOff.objects.filter(
+                employee=entry.employee,
+                working_date=entry.date,
+                status='PENDING',
+                compoff_date__isnull=True,
+            ).delete()
+            entry.delete()
+        self.message_user(
+            request,
+            f"Deleted {deleted_count} selected timesheet entries and cleaned up related pending CompOffs."
+        )
+    delete_selected_client_timesheet_entries.short_description = 'Delete selected client timesheet entries'
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
+
     def get_queryset(self, request):
         """Show recent entries first"""
         qs = super().get_queryset(request)
@@ -389,5 +413,6 @@ admin.site.register(Location, LocationAdmin)
 admin.site.register(Employee, EmployeeAdmin)
 admin.site.register(Holiday, HolidayAdmin)
 admin.site.register(CompOff)
+admin.site.register(TimesheetEntry, TimesheetEntryAdmin)
 # TimesheetSummary is registered via @admin.register decorator
 # Models are now registered with the custom admin site in urls.py
