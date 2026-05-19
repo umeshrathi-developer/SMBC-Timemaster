@@ -104,8 +104,8 @@ class Migration(migrations.Migration):
                 ('updated_date', models.DateTimeField(auto_now=True)),
             ],
             options={
-                'verbose_name': 'Timesheet Summary',
-                'verbose_name_plural': 'Timesheet Summaries',
+                'verbose_name': 'Infobeans Timemaster Summary',
+                'verbose_name_plural': 'Infobeans Timemaster Summaries',
             },
         ),
         migrations.CreateModel(
@@ -201,8 +201,8 @@ class Migration(migrations.Migration):
                 ('employee', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='timesheet_entries', to='timesheet.employee')),
             ],
             options={
-                'verbose_name': 'Timesheet Entry',
-                'verbose_name_plural': 'Timesheet Entries',
+                'verbose_name': 'Client Timesheet Entry',
+                'verbose_name_plural': 'Client Timesheet Entries',
                 'ordering': ['-date', 'employee'],
                 'indexes': [models.Index(fields=['employee', 'date'], name='timesheet_t_employe_55bbe2_idx'), models.Index(fields=['status'], name='timesheet_t_status_d31984_idx')],
                 'unique_together': {('employee', 'date', 'project')},

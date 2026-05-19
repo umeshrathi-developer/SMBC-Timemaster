@@ -128,8 +128,8 @@ class TimesheetSummary(models.Model):
     updated_date = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Timesheet Summary'
-        verbose_name_plural = 'Timesheet Summaries'
+        verbose_name = 'Infobeans Timemaster Summary'
+        verbose_name_plural = 'Infobeans Timemaster Summaries'
 
     def __str__(self):
         return '{} - {} ({} hrs)'.format(self.team_member, self.project, self.total_hours)
@@ -233,8 +233,8 @@ class TimesheetEntry(models.Model):
     updated_date = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Timesheet Entry'
-        verbose_name_plural = 'Timesheet Entries'
+        verbose_name = 'Client Timesheet Entry'
+        verbose_name_plural = 'Client Timesheet Entries'
         ordering = ['-date', 'employee']
         unique_together = ('employee', 'date', 'project')
         indexes = [
