@@ -26,6 +26,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 db.sqlite3
+db_bkp.sqlite3
 *.db
 db/
 .DS_Store
@@ -48,3 +49,5 @@ coverage.xml
 node_modules/
 .env.example
 .env*
+!.env.example
+!.env.docker.example

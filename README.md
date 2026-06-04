@@ -265,6 +265,12 @@ Replace `localhost` with server's IP address:
 http://192.168.1.100:8000/timesheet/
 ```
 
+### Docker Deployment
+
+For a single-container deployment on a server running multiple services, use the Docker setup in `Dockerfile` and `docker-compose.yml`.
+
+See `docs/DOCKER_DEPLOYMENT.md` for the build, environment, volume, and startup commands.
+
 
 ### Export to CSV
 Data can be exported from the admin interface or custom management commands can be created.
