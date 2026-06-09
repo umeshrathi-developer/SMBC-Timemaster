@@ -72,6 +72,7 @@ class Holiday(models.Model):
     HOLIDAY_TYPES = (
         ('PUBLIC_HOLIDAY', 'Public Holiday'),
         ('WEEKEND', 'Weekend'),
+        ('US_HOLIDAY', 'US Holiday'),
         ('SPECIAL_HOLIDAY', 'Special Holiday'),
     )
 

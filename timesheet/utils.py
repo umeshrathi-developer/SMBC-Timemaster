@@ -156,7 +156,7 @@ def _is_weekend_or_public_holiday(entry_date, employee):
 
     holidays = Holiday.objects.filter(
         date=entry_date,
-        holiday_type='PUBLIC_HOLIDAY'
+        holiday_type__in=['PUBLIC_HOLIDAY', 'US_HOLIDAY']
     )
     location = _get_employee_location_name(employee)
 
@@ -212,7 +212,7 @@ def _is_import_workday_for_compoff_use(entry_date, employee):
     location = _get_employee_location_name(employee)
     holidays = Holiday.objects.filter(
         date=entry_date,
-        holiday_type__in=['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY']
+        holiday_type__in=['PUBLIC_HOLIDAY', 'US_HOLIDAY', 'SPECIAL_HOLIDAY']
     )
     return not any(_holiday_applies_to_location(holiday, location) for holiday in holidays)
 
@@ -906,13 +906,20 @@ def import_holiday_file(file_obj):
     - Date
     - Day
     - Holiday
+    - Holiday Type
     - Applicability
 
     Column mapping:
     - Holiday -> Holiday.name
+    - Holiday Type -> Holiday.holiday_type
     - Applicability -> Holiday.location
-    - holiday_type -> PUBLIC_HOLIDAY
     """
+    holiday_type_map = {
+        'public holiday': 'PUBLIC_HOLIDAY',
+        'us holiday': 'US_HOLIDAY',
+        'special holiday': 'SPECIAL_HOLIDAY',
+    }
+
     try:
         workbook = load_workbook(file_obj)
         worksheet = workbook.active
@@ -937,7 +944,7 @@ def import_holiday_file(file_obj):
             for index, column in enumerate(header_row)
             if column is not None
         }
-        required_headers = ['date', 'holiday', 'applicability']
+        required_headers = ['date', 'holiday', 'holiday type', 'applicability']
         missing_headers = [header for header in required_headers if header not in header_map]
         if missing_headers:
             return {
@@ -960,6 +967,12 @@ def import_holiday_file(file_obj):
                     holiday_date = datetime.strptime(str(date_value).strip(), '%Y-%m-%d').date()
 
                 holiday_name = str(row[header_map['holiday']]).strip()
+                holiday_type_label = str(row[header_map['holiday type']] or '').strip().lower()
+                holiday_type = holiday_type_map.get(holiday_type_label)
+                if not holiday_type:
+                    raise ValueError(
+                        'Holiday Type must be "Public Holiday", "US Holiday", or "Special Holiday".'
+                    )
                 location = str(row[header_map['applicability']]).strip() if row[header_map['applicability']] else ''
 
                 holiday, created = Holiday.objects.update_or_create(
@@ -967,7 +980,7 @@ def import_holiday_file(file_obj):
                     name=holiday_name,
                     location=location,
                     defaults={
-                        'holiday_type': 'PUBLIC_HOLIDAY',
+                        'holiday_type': holiday_type,
                     }
                 )
 

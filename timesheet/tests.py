@@ -12,7 +12,7 @@ from django.urls import reverse
 from openpyxl import Workbook
 
 from timesheet.forms import TimesheetEntryForm, TimesheetImportForm
-from timesheet.utils import import_client_timesheet_entries, import_employee_file
+from timesheet.utils import import_client_timesheet_entries, import_employee_file, import_holiday_file
 
 from timesheet.models import CompOff, Employee, Holiday, Location, Project, TimesheetEntry, TimesheetImportLog
 
@@ -255,6 +255,62 @@ class HolidayModelTest(TestCase):
         )
 
 
+class HolidayImportTests(TestCase):
+    def _build_holiday_workbook_file(self, rows, headers=None):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(headers or ['S. No.', 'Date', 'Day', 'Holiday', 'Holiday Type', 'Applicability'])
+        for row in rows:
+            worksheet.append(row)
+
+        file_obj = BytesIO()
+        workbook.save(file_obj)
+        workbook.close()
+        file_obj.seek(0)
+        return file_obj
+
+    def test_import_holiday_file_stores_uploaded_holiday_types(self):
+        file_obj = self._build_holiday_workbook_file([
+            [1, '2026-07-04', 'Saturday', 'Independence Day', 'US Holiday', 'Indore'],
+            [2, '2026-08-15', 'Saturday', 'Independence Day India', 'Public Holiday', 'Indore'],
+        ])
+
+        result = import_holiday_file(file_obj)
+
+        self.assertTrue(result['success'], result['errors'])
+        self.assertEqual(result['created_count'], 2)
+        self.assertEqual(
+            Holiday.objects.get(name='Independence Day').holiday_type,
+            'US_HOLIDAY'
+        )
+        self.assertEqual(
+            Holiday.objects.get(name='Independence Day India').holiday_type,
+            'PUBLIC_HOLIDAY'
+        )
+
+    def test_import_holiday_file_requires_holiday_type_column(self):
+        file_obj = self._build_holiday_workbook_file(
+            [[1, '2026-07-04', 'Saturday', 'Independence Day', 'Indore']],
+            headers=['S. No.', 'Date', 'Day', 'Holiday', 'Applicability']
+        )
+
+        result = import_holiday_file(file_obj)
+
+        self.assertFalse(result['success'])
+        self.assertIn('holiday type', result['errors'][0])
+
+    def test_import_holiday_file_rejects_unknown_holiday_type(self):
+        file_obj = self._build_holiday_workbook_file([
+            [1, '2026-07-04', 'Saturday', 'Independence Day', 'Bank Holiday', 'Indore'],
+        ])
+
+        result = import_holiday_file(file_obj)
+
+        self.assertFalse(result['success'])
+        self.assertIn('Public Holiday', result['errors'][0])
+        self.assertIn('US Holiday', result['errors'][0])
+
+
 class EmployeeProjectSelectionTests(TestCase):
     def setUp(self):
         self.employee_group, _ = Group.objects.get_or_create(name='Employee')
@@ -310,6 +366,40 @@ class EmployeeProjectSelectionTests(TestCase):
                 date=date(2026, 4, 1),
             ).exists()
         )
+
+    def test_generate_timesheet_creates_and_highlights_us_holiday_entry(self):
+        Holiday.objects.create(
+            name='US Holiday',
+            date=date(2026, 4, 3),
+            holiday_type='US_HOLIDAY',
+            location='Indore',
+        )
+        self.client.login(username='bob', password='testpass123')
+
+        response = self.client.post(
+            reverse('generate_timesheet_weekdays'),
+            {
+                'month': '2026-04',
+                'from_date': '2026-04-03',
+                'to_date': '2026-04-03',
+                'project': 'Risk Tech',
+                'hours_per_day': '8',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            TimesheetEntry.objects.filter(
+                employee=self.employee,
+                date=date(2026, 4, 3),
+                project='Risk Tech',
+                hours=8,
+                status='DRAFT',
+            ).exists()
+        )
+
+        response = self.client.get(reverse('timesheet_entry_list'), {'month': '2026-04'})
+        self.assertIn(date(2026, 4, 3), response.context['holiday_dates'])
 
     def test_admin_can_edit_submitted_timesheet_and_sync_pending_compoff(self):
         entry = TimesheetEntry.objects.create(
@@ -512,6 +602,36 @@ class ClientReportingRulesTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['report_rows'][0]['hours'][0], '')
+        self.assertEqual(response.context['employee_totals'][0], 0)
+
+    def test_client_reporting_hides_us_holiday_worked_hours(self):
+        Holiday.objects.create(
+            name='US Holiday',
+            date=date(2026, 4, 3),
+            holiday_type='US_HOLIDAY',
+            location='Indore',
+        )
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 3),
+            project='Risk Tech',
+            hours=8,
+            status='SUBMITTED',
+        )
+
+        self.client.login(username='admin', password='testpass123')
+        response = self.client.get(
+            reverse('client_reporting'),
+            {
+                'manager': 'Manager Three',
+                'start_date': '2026-04-03',
+                'end_date': '2026-04-03',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['report_rows'][0]['hours'][0], '')
+        self.assertEqual(response.context['report_rows'][0]['date_type'], 'US Holiday')
         self.assertEqual(response.context['employee_totals'][0], 0)
 
     def test_client_reporting_shows_taken_compoff_hours_on_adjusted_weekday(self):
@@ -831,6 +951,29 @@ class ClientTimesheetImportTests(TestCase):
             name='Holiday',
             date=date(2026, 4, 3),
             holiday_type='PUBLIC_HOLIDAY',
+            location='Pune, Indore, Chennai',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-03', 8, 0],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['compoff_created_count'], 1)
+        self.assertTrue(
+            CompOff.objects.filter(
+                employee=self.employee,
+                working_date=date(2026, 4, 3),
+                status='PENDING',
+            ).exists()
+        )
+
+    def test_import_client_timesheet_creates_compoff_for_us_holiday_work(self):
+        Holiday.objects.create(
+            name='US Holiday',
+            date=date(2026, 4, 3),
+            holiday_type='US_HOLIDAY',
             location='Pune, Indore, Chennai',
         )
         file_obj = self._build_matrix_workbook_file([

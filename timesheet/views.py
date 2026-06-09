@@ -338,7 +338,7 @@ def is_holiday_date(date_obj, employee=None, exclude_special=False):
         employee: Employee whose location should be used for holiday lookup
         exclude_special: If True, ignore SPECIAL_HOLIDAY type
     """
-    holiday_types = ['PUBLIC_HOLIDAY', 'WEEKEND']
+    holiday_types = ['PUBLIC_HOLIDAY', 'US_HOLIDAY', 'WEEKEND']
     if not exclude_special:
         holiday_types.append('SPECIAL_HOLIDAY')
 
@@ -350,7 +350,7 @@ def is_holiday_date(date_obj, employee=None, exclude_special=False):
 
 
 def is_weekend_or_fixed_holiday(date_obj, employee=None):
-    """Check if date is weekend (Sat/Sun) or PUBLIC_HOLIDAY.
+    """Check if date is weekend (Sat/Sun), PUBLIC_HOLIDAY, or US_HOLIDAY.
     
     Used to identify eligible Comp-Off days (not SPECIAL_HOLIDAY).
     """
@@ -360,7 +360,7 @@ def is_weekend_or_fixed_holiday(date_obj, employee=None):
     
     return holiday_exists_for_location(
         date_obj,
-        ['PUBLIC_HOLIDAY'],
+        ['PUBLIC_HOLIDAY', 'US_HOLIDAY'],
         get_employee_location_name(employee)
     )
 
@@ -392,7 +392,7 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
     """Auto-deduct accrued Comp-Off for missing weekday timesheet entries
     
     For a given month:
-    1. Find all weekdays (excluding weekends and PUBLIC_HOLIDAY/SPECIAL_HOLIDAY)
+    1. Find all weekdays (excluding weekends and holiday dates)
     2. Check which dates have no timesheet entries
     3. For each missing date, find oldest PENDING Comp-Off and mark as TAKEN
     
@@ -412,7 +412,7 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
     while current <= month_end:
         # Check if it's a weekday (Monday=0 to Friday=4)
         if current.weekday() < 5:
-            # Check if it's a holiday (PUBLIC_HOLIDAY or SPECIAL_HOLIDAY)
+            # Check if it's a holiday (PUBLIC_HOLIDAY, US_HOLIDAY, or SPECIAL_HOLIDAY)
             if not is_holiday_date(current, employee=employee, exclude_special=True):
                 # Check if employee has any submitted positive hours for this date.
                 has_positive_submitted_hours = TimesheetEntry.objects.filter(
@@ -2030,15 +2030,29 @@ def generate_timesheet_weekdays(request):
         days_to_include.append(6)
     days_to_include.sort()
     
-    # Generate entries for specified days, excluding PUBLIC_HOLIDAY and SPECIAL_HOLIDAY
+    # Generate entries for specified days, excluding PUBLIC_HOLIDAY and SPECIAL_HOLIDAY.
+    # US_HOLIDAY is intentionally included so it can be submitted as worked time
+    # and highlighted like other holiday/weekend rows (common for Indian team).
+    # US_HOLIDAY dates are created REGARDLESS of weekday/weekend.
     entries_created = 0
     entries_skipped = 0
     current = from_dt
     
     while current <= to_dt:
         weekday = current.weekday()
-        if weekday in days_to_include:
-            # Skip holidays (PUBLIC_HOLIDAY, SPECIAL_HOLIDAY)
+        
+        # Check if this date is a US_HOLIDAY - these should ALWAYS get entries
+        is_us_holiday = holiday_exists_for_location(
+            current,
+            ['US_HOLIDAY'],
+            get_employee_location_name(employee)
+        )
+        
+        # Include date if: (it's a weekday/weekend per user selection) OR (it's a US_HOLIDAY)
+        should_create_entry = (weekday in days_to_include) or is_us_holiday
+        
+        if should_create_entry:
+            # Skip only PUBLIC_HOLIDAY and SPECIAL_HOLIDAY (mandatory non-working days)
             is_blocked_holiday = holiday_exists_for_location(
                 current,
                 ['PUBLIC_HOLIDAY', 'SPECIAL_HOLIDAY'],

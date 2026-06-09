@@ -133,6 +133,7 @@ class HolidayAdminForm(forms.ModelForm):
     holiday_type = forms.ChoiceField(
         choices=[
             ('PUBLIC_HOLIDAY', 'Public Holiday'),
+            ('US_HOLIDAY', 'US Holiday'),
             ('SPECIAL_HOLIDAY', 'Special Holiday'),
         ],
         widget=forms.Select(attrs={
@@ -153,7 +154,7 @@ class HolidayImportForm(forms.Form):
             'class': 'form-control',
             'accept': '.xlsx,.xlsm',
         }),
-        help_text='Upload an Excel file with columns: S. No., Date, Day, Holiday, Applicability'
+        help_text='Upload an Excel file with columns: S. No., Date, Day, Holiday, Holiday Type, Applicability'
     )
 
     def clean_file(self):

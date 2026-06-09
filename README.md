@@ -122,7 +122,7 @@ Timemaster automation/
 
 ### Holiday
 - **date**: Holiday/Weekend date
-- **holiday_type**: Type (PUBLIC_HOLIDAY, WEEKEND, SPECIAL_HOLIDAY)
+- **holiday_type**: Type (PUBLIC_HOLIDAY, WEEKEND, US_HOLIDAY, SPECIAL_HOLIDAY)
   SPECIAL_HOLIDAY is a mandatory company holiday.
 - **name**: Holiday name/description
 - **location**: Optional location tied to the holiday

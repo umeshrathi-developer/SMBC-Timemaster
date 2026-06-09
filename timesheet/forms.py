@@ -164,7 +164,7 @@ class CompOffForm(forms.ModelForm):
         }
 
     def clean_working_date(self):
-        """Validate that working_date is a weekend or public holiday but not a special holiday"""
+        """Validate that working_date is a weekend or eligible holiday but not a special holiday"""
         working_date = self.cleaned_data.get('working_date')
         if working_date:
             # Check if it's a special holiday - NOT ALLOWED
@@ -179,13 +179,13 @@ class CompOffForm(forms.ModelForm):
             
             # Check if it's a weekend (Saturday=5, Sunday=6)
             if working_date.weekday() < 5:  # Monday to Friday
-                # Check if it's a public holiday
+                # Check if it's a public/US holiday
                 if not self._holiday_exists_for_employee(
                     working_date,
-                    holiday_types=['PUBLIC_HOLIDAY', 'WEEKEND']
+                    holiday_types=['PUBLIC_HOLIDAY', 'US_HOLIDAY', 'WEEKEND']
                 ):
                     raise forms.ValidationError(
-                        'Working date must be a weekend (Saturday/Sunday) or a public holiday.'
+                        'Working date must be a weekend (Saturday/Sunday), public holiday, or US holiday.'
                     )
         return working_date
 
@@ -202,7 +202,7 @@ class CompOffForm(forms.ModelForm):
             # Check if it's any holiday - NOT ALLOWED
             if self._holiday_exists_for_employee(
                 compoff_date,
-                holiday_types=['PUBLIC_HOLIDAY', 'WEEKEND', 'SPECIAL_HOLIDAY']
+                holiday_types=['PUBLIC_HOLIDAY', 'US_HOLIDAY', 'WEEKEND', 'SPECIAL_HOLIDAY']
             ):
                 raise forms.ValidationError(
                     'Comp-Off date cannot be a holiday or weekend.'
