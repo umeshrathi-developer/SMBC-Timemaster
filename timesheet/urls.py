@@ -42,6 +42,12 @@ urlpatterns = [
     path('compoffs/<int:pk>/edit/', views.compoff_edit, name='compoff_edit'),
     path('compoffs/<int:pk>/delete/', views.compoff_delete, name='compoff_delete'),
     
+    # Accrual Management
+    path('accruals/', views.accrual_list, name='accrual_list'),
+    path('accruals/add/', views.accrual_add, name='accrual_add'),
+    path('accruals/<int:pk>/edit/', views.accrual_edit, name='accrual_edit'),
+    path('accruals/<int:pk>/delete/', views.accrual_delete, name='accrual_delete'),
+    
     # Timesheet Data Views
     path('timesheet-data/', views.timesheet_data_view, name='timesheet_data'),
     path('client-reporting/', views.client_reporting, name='client_reporting'),

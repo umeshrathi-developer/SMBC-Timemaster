@@ -4,7 +4,7 @@ from django.shortcuts import render, redirect
 from django.urls import path
 from django.contrib import messages
 import logging
-from .models import Project, Location, Employee, Holiday, CompOff, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
+from .models import Project, Location, Employee, Holiday, CompOff, Accrual, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
 from .forms import TimesheetImportForm
 from .utils import import_employee_file, import_holiday_file
 
@@ -414,6 +414,7 @@ admin.site.register(Location, LocationAdmin)
 admin.site.register(Employee, EmployeeAdmin)
 admin.site.register(Holiday, HolidayAdmin)
 admin.site.register(CompOff)
+admin.site.register(Accrual)
 admin.site.register(TimesheetEntry, TimesheetEntryAdmin)
 # TimesheetSummary is registered via @admin.register decorator
 # Models are now registered with the custom admin site in urls.py

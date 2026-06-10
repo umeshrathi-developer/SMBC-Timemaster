@@ -4,7 +4,7 @@ from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 
-from timesheet.models import CompOff, Employee, Holiday, Location, TimesheetEntry
+from timesheet.models import Accrual, CompOff, Employee, Holiday, Location, TimesheetEntry
 
 
 def get_location(name):
@@ -83,6 +83,112 @@ class TimesheetSubmissionCompOffTests(TestCase):
         compoff = CompOff.objects.get(employee=self.employee)
         self.assertEqual(compoff.status, 'TAKEN')
         self.assertEqual(compoff.compoff_date, date(2026, 4, 2))
+
+    def test_submission_creates_accrual_for_us_holiday_work(self):
+        Holiday.objects.create(
+            name='US Holiday',
+            date=date(2026, 4, 3),
+            holiday_type='US_HOLIDAY',
+            location=get_location('Indore'),
+        )
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 3),
+            project='Client Project',
+            hours=8,
+            status='DRAFT',
+        )
+
+        self.client.login(username='alice', password='testpass123')
+        response = self.client.post(
+            reverse('timesheet_entry_submit'),
+            {
+                'month': '2026-04',
+                'submit_all': 'false',
+                'from_date': '2026-04-03',
+                'to_date': '2026-04-03',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            CompOff.objects.filter(employee=self.employee, working_date=date(2026, 4, 3)).exists()
+        )
+        self.assertTrue(
+            Accrual.objects.filter(
+                employee=self.employee,
+                working_date=date(2026, 4, 3),
+                status='PENDING',
+            ).exists()
+        )
+
+    def test_submission_adjusts_pending_accrual_for_leave_taken(self):
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 3, 29),
+            status='PENDING',
+        )
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 1),
+            project='Client Project',
+            hours=8,
+            status='DRAFT',
+        )
+
+        self.client.login(username='alice', password='testpass123')
+        response = self.client.post(
+            reverse('timesheet_entry_submit'),
+            {
+                'month': '2026-04',
+                'submit_all': 'false',
+                'from_date': '2026-04-01',
+                'to_date': '2026-04-02',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        accrual = Accrual.objects.get(employee=self.employee, working_date=date(2026, 3, 29))
+        self.assertEqual(accrual.status, 'ADJUSTED')
+        self.assertEqual(accrual.adjusted_date, date(2026, 4, 2))
+        self.assertEqual(accrual.adjustment_reason, 'LEAVE_TAKEN')
+
+    def test_submission_adjusts_pending_accrual_for_public_holiday_off(self):
+        Holiday.objects.create(
+            name='Public Holiday',
+            date=date(2026, 4, 2),
+            holiday_type='PUBLIC_HOLIDAY',
+            location=get_location('Indore'),
+        )
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 3, 29),
+            status='PENDING',
+        )
+        TimesheetEntry.objects.create(
+            employee=self.employee,
+            date=date(2026, 4, 2),
+            project='Client Project',
+            hours=0,
+            status='DRAFT',
+        )
+
+        self.client.login(username='alice', password='testpass123')
+        response = self.client.post(
+            reverse('timesheet_entry_submit'),
+            {
+                'month': '2026-04',
+                'submit_all': 'false',
+                'from_date': '2026-04-02',
+                'to_date': '2026-04-02',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        accrual = Accrual.objects.get(employee=self.employee, working_date=date(2026, 3, 29))
+        self.assertEqual(accrual.status, 'ADJUSTED')
+        self.assertEqual(accrual.adjusted_date, date(2026, 4, 2))
+        self.assertEqual(accrual.adjustment_reason, 'PUBLIC_HOLIDAY_OFF')
 
     def test_empty_range_does_not_consume_pending_compoff(self):
         CompOff.objects.create(

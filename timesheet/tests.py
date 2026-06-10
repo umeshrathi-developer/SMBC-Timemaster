@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.conf import settings
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from openpyxl import Workbook
@@ -14,7 +15,7 @@ from openpyxl import Workbook
 from timesheet.forms import TimesheetEntryForm, TimesheetImportForm
 from timesheet.utils import import_client_timesheet_entries, import_employee_file, import_holiday_file
 
-from timesheet.models import CompOff, Employee, Holiday, Location, Project, TimesheetEntry, TimesheetImportLog
+from timesheet.models import Accrual, CompOff, Employee, Holiday, Location, Project, TimesheetEntry, TimesheetImportLog
 
 
 def get_location(name):
@@ -167,6 +168,113 @@ class EmployeeImportTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertTrue(Employee.objects.filter(employee_id='E1003', user__username='neha.patel').exists())
+
+
+class AccrualPageAccessTests(TestCase):
+    def setUp(self):
+        self.project = Project.objects.create(
+            project_id=501,
+            department_name='Risk Tech',
+            project='SMBC1',
+            project_code=5001,
+            manager='Ranzith',
+        )
+        self.employee_group, _ = Group.objects.get_or_create(name='Employee')
+        self.user = User.objects.create_user(
+            username='employee_accrual_user',
+            email='employee_accrual@test.com',
+            password='testpass123',
+        )
+        self.user.groups.add(self.employee_group)
+        self.employee = Employee.objects.create(
+            user=self.user,
+            name='Accrual Employee',
+            employee_id='E5001',
+            email='employee_accrual@test.com',
+            project=self.project,
+            location=get_location('Indore'),
+        )
+        self.accrual = Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 5),
+            adjusted_date=date(2026, 4, 7),
+            adjustment_reason='LEAVE_TAKEN',
+            status='PENDING',
+            notes='Test accrual',
+        )
+
+    def test_employee_can_view_their_own_accruals(self):
+        self.client.login(username='employee_accrual_user', password='testpass123')
+
+        response = self.client.get(reverse('accrual_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Accruals')
+        self.assertEqual(list(response.context['accruals']), [self.accrual])
+
+    def test_admin_can_open_accrual_add_form(self):
+        admin_user = User.objects.create_superuser(
+            username='admin_accrual_form',
+            password='testpass123',
+            email='admin_accrual_form@test.com',
+        )
+        self.client.login(username='admin_accrual_form', password='testpass123')
+
+        response = self.client.get(reverse('accrual_add'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'timesheet/accrual_form.html')
+
+
+class AccrualGenerationCommandTests(TestCase):
+    def setUp(self):
+        self.project = Project.objects.create(
+            project_id=701,
+            department_name='Risk Tech',
+            project='SMBC1',
+            project_code=7001,
+            manager='Ranzith',
+        )
+        self.employee = Employee.objects.create(
+            name='Accrual Migrator',
+            employee_id='E7001',
+            email='accrual.migrator@test.com',
+            project=self.project,
+            location=get_location('Indore'),
+        )
+
+    def test_generate_accruals_from_existing_compoffs(self):
+        CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 5),
+            compoff_date=date(2026, 4, 7),
+            status='TAKEN',
+            notes='Existing CompOff',
+        )
+        CompOff.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 12),
+            compoff_date=None,
+            status='PENDING',
+            notes='Pending CompOff',
+        )
+
+        call_command('generate_accruals_from_compoffs', verbosity=0)
+
+        accruals = Accrual.objects.filter(employee=self.employee).order_by('working_date')
+
+        self.assertEqual(accruals.count(), 2)
+        first = accruals[0]
+        second = accruals[1]
+
+        self.assertEqual(first.working_date, date(2026, 4, 5))
+        self.assertEqual(first.adjusted_date, date(2026, 4, 7))
+        self.assertEqual(first.status, 'ADJUSTED')
+        self.assertIn('Existing CompOff', first.notes)
+
+        self.assertEqual(second.working_date, date(2026, 4, 12))
+        self.assertIsNone(second.adjusted_date)
+        self.assertEqual(second.status, 'PENDING')
 
 
 class CompOffModelTest(TestCase):
@@ -634,6 +742,36 @@ class ClientReportingRulesTests(TestCase):
         self.assertEqual(response.context['report_rows'][0]['date_type'], 'US Holiday')
         self.assertEqual(response.context['employee_totals'][0], 0)
 
+    def test_client_reporting_shows_public_holiday_accrual_hours_for_adjusted_off_day(self):
+        Holiday.objects.create(
+            name='Public Holiday',
+            date=date(2026, 4, 3),
+            holiday_type='PUBLIC_HOLIDAY',
+            location='Indore',
+        )
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 3),
+            adjusted_date=date(2026, 4, 3),
+            adjustment_reason='PUBLIC_HOLIDAY_OFF',
+            status='ADJUSTED',
+            notes='Adjusted for public holiday off',
+        )
+
+        self.client.login(username='admin', password='testpass123')
+        response = self.client.get(
+            reverse('client_reporting'),
+            {
+                'manager': 'Manager Three',
+                'start_date': '2026-04-03',
+                'end_date': '2026-04-03',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['report_rows'][0]['hours'][0], 8.0)
+        self.assertEqual(response.context['employee_totals'][0], 8.0)
+
     def test_client_reporting_shows_taken_compoff_hours_on_adjusted_weekday(self):
         TimesheetEntry.objects.create(
             employee=self.employee,
@@ -745,17 +883,19 @@ class AccrualSummaryFormattingTests(TestCase):
         )
 
     def test_accrual_adjusted_message_includes_work_and_taken_dates(self):
-        CompOff.objects.create(
+        Accrual.objects.create(
             employee=self.employee,
             working_date=date(2026, 4, 5),
-            compoff_date=date(2026, 4, 7),
-            status='TAKEN',
+            adjusted_date=date(2026, 4, 7),
+            adjustment_reason='LEAVE_TAKEN',
+            status='ADJUSTED',
         )
-        CompOff.objects.create(
+        Accrual.objects.create(
             employee=self.employee,
             working_date=date(2026, 4, 12),
-            compoff_date=date(2026, 4, 14),
-            status='TAKEN',
+            adjusted_date=date(2026, 4, 14),
+            adjustment_reason='PUBLIC_HOLIDAY_OFF',
+            status='ADJUSTED',
         )
 
         self.client.login(username='admin_accrual', password='testpass123')
@@ -969,7 +1109,7 @@ class ClientTimesheetImportTests(TestCase):
             ).exists()
         )
 
-    def test_import_client_timesheet_creates_compoff_for_us_holiday_work(self):
+    def test_import_client_timesheet_creates_accrual_for_us_holiday_work(self):
         Holiday.objects.create(
             name='US Holiday',
             date=date(2026, 4, 3),
@@ -983,12 +1123,18 @@ class ClientTimesheetImportTests(TestCase):
         result = import_client_timesheet_entries(file_obj)
 
         self.assertTrue(result['success'])
-        self.assertEqual(result['compoff_created_count'], 1)
+        self.assertEqual(result['compoff_created_count'], 0)
         self.assertTrue(
-            CompOff.objects.filter(
+            Accrual.objects.filter(
                 employee=self.employee,
                 working_date=date(2026, 4, 3),
                 status='PENDING',
+            ).exists()
+        )
+        self.assertFalse(
+            CompOff.objects.filter(
+                employee=self.employee,
+                working_date=date(2026, 4, 3),
             ).exists()
         )
 
@@ -1092,6 +1238,46 @@ class ClientTimesheetImportTests(TestCase):
                 status='PENDING',
             ).exists()
         )
+
+    def test_import_client_timesheet_adjusts_pending_accrual_for_zero_weekday(self):
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 3, 29),
+            status='PENDING',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-06', 0, 8],
+        ])
+
+        result = import_client_timesheet_entries(file_obj)
+
+        self.assertTrue(result['success'])
+        accrual = Accrual.objects.get(employee=self.employee, working_date=date(2026, 3, 29))
+        self.assertEqual(accrual.status, 'ADJUSTED')
+        self.assertEqual(accrual.adjusted_date, date(2026, 4, 6))
+        self.assertEqual(accrual.adjustment_reason, 'LEAVE_TAKEN')
+
+    def test_import_client_timesheet_adjusts_pending_accrual_for_missing_weekdays_in_selected_period(self):
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 3, 29),
+            status='PENDING',
+        )
+        file_obj = self._build_matrix_workbook_file([
+            ['2026-04-03', 8, 0],
+        ])
+
+        result = import_client_timesheet_entries(
+            file_obj,
+            start_date=date(2026, 4, 1),
+            end_date=date(2026, 4, 3),
+        )
+
+        self.assertTrue(result['success'])
+        accrual = Accrual.objects.get(employee=self.employee, working_date=date(2026, 3, 29))
+        self.assertEqual(accrual.status, 'ADJUSTED')
+        self.assertEqual(accrual.adjusted_date, date(2026, 4, 1))
+        self.assertEqual(accrual.adjustment_reason, 'LEAVE_TAKEN')
 
     def test_import_client_timesheet_zero_weekday_marks_pending_compoff_taken(self):
         compoff = CompOff.objects.create(

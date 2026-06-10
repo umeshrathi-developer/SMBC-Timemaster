@@ -16,9 +16,9 @@ from calendar import monthrange
 from datetime import datetime, date, timedelta
 import logging
 import threading
-from .models import Project, Employee, CompOff, Holiday, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetEntry
+from .models import Project, Employee, CompOff, Accrual, Holiday, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetEntry
 from .forms import (
-    EmployeeForm, CompOffForm, UserRegistrationForm, ChangePasswordForm,
+    EmployeeForm, CompOffForm, AccrualForm, UserRegistrationForm, ChangePasswordForm,
     PasswordResetSelectionForm, TimesheetEntryForm, ClientTimesheetImportForm
 )
 
@@ -209,30 +209,30 @@ def build_accrual_summary_tables(start_date, end_date):
 
         accrual_data = []
         for employee in employees:
-            pending_compoffs = CompOff.objects.filter(employee=employee, status='PENDING')
-            accrual_pending_hours = pending_compoffs.count() * 8
-            accrual_days = [c.working_date.strftime('%d-%b-%Y') for c in pending_compoffs if c.working_date]
+            pending_accruals = Accrual.objects.filter(employee=employee, status='PENDING')
+            accrual_pending_hours = pending_accruals.count() * 8
+            accrual_days = [item.working_date.strftime('%d-%b-%Y') for item in pending_accruals if item.working_date]
             accrual_days_str = ', '.join(accrual_days) if accrual_days else 'N/A'
 
-            taken_compoffs = CompOff.objects.filter(
+            adjusted_accruals = Accrual.objects.filter(
                 employee=employee,
-                status='TAKEN',
-                compoff_date__range=(start_date, end_date)
-            ).order_by('compoff_date', 'working_date')
+                status='ADJUSTED',
+                adjusted_date__range=(start_date, end_date)
+            ).order_by('adjusted_date', 'working_date')
             work_dates = [
-                c.working_date.strftime('%d-%b-%Y')
-                for c in taken_compoffs
-                if c.working_date
+                item.working_date.strftime('%d-%b-%Y')
+                for item in adjusted_accruals
+                if item.working_date
             ]
-            compoff_dates = [
-                c.compoff_date.strftime('%d-%b-%Y')
-                for c in taken_compoffs
-                if c.compoff_date
+            adjusted_dates = [
+                item.adjusted_date.strftime('%d-%b-%Y')
+                for item in adjusted_accruals
+                if item.adjusted_date
             ]
-            if work_dates and compoff_dates:
+            if work_dates and adjusted_dates:
                 accrual_adjusted_str = (
                     f"Worked on {', '.join(work_dates)} adjusted against PTO on "
-                    f"{', '.join(compoff_dates)}"
+                    f"{', '.join(adjusted_dates)}"
                 )
             else:
                 accrual_adjusted_str = 'N/A'
@@ -448,6 +448,94 @@ def auto_deduct_compoff_for_missing_weekdays(employee, selected_date):
     return compoff_deducted
 
 
+def auto_adjust_accrual_for_missing_weekdays_in_range(employee, from_date, to_date):
+    """Mark PENDING Accruals as ADJUSTED for leave taken on weekday entries in a date range."""
+    adjusted = 0
+    current = from_date
+
+    while current <= to_date:
+        if current.weekday() < 5 and not is_holiday_date(current, employee=employee, exclude_special=False):
+            has_positive_submitted_hours = TimesheetEntry.objects.filter(
+                employee=employee,
+                date=current,
+                status='SUBMITTED',
+                hours__gt=0,
+            ).exists()
+            if not has_positive_submitted_hours:
+                existing = Accrual.objects.filter(
+                    employee=employee,
+                    status='ADJUSTED',
+                    adjusted_date=current,
+                    adjustment_reason='LEAVE_TAKEN',
+                ).exists()
+                if existing:
+                    current += timedelta(days=1)
+                    continue
+
+                oldest_accrual = Accrual.objects.filter(
+                    employee=employee,
+                    status='PENDING',
+                    adjusted_date__isnull=True,
+                    working_date__lte=current,
+                ).order_by('created_date').first()
+
+                if oldest_accrual:
+                    oldest_accrual.adjusted_date = current
+                    oldest_accrual.adjustment_reason = 'LEAVE_TAKEN'
+                    oldest_accrual.save()
+                    adjusted += 1
+
+        current += timedelta(days=1)
+
+    return adjusted
+
+
+def auto_adjust_accrual_for_public_holiday_off_in_range(employee, from_date, to_date):
+    """Mark PENDING Accruals as ADJUSTED for public-holiday-off days in a date range."""
+    adjusted = 0
+    current = from_date
+
+    while current <= to_date:
+        has_positive_submitted_hours = TimesheetEntry.objects.filter(
+            employee=employee,
+            date=current,
+            status='SUBMITTED',
+            hours__gt=0,
+        ).exists()
+        if not has_positive_submitted_hours:
+            public_holidays = Holiday.objects.filter(
+                date=current,
+                holiday_type='PUBLIC_HOLIDAY',
+            )
+            if any(holiday_applies_to_location(holiday, get_employee_location_name(employee)) for holiday in public_holidays):
+                existing = Accrual.objects.filter(
+                    employee=employee,
+                    status='ADJUSTED',
+                    adjusted_date=current,
+                    adjustment_reason='PUBLIC_HOLIDAY_OFF',
+                ).exists()
+                if existing:
+                    current += timedelta(days=1)
+                    continue
+
+                oldest_accrual = Accrual.objects.filter(
+                    employee=employee,
+                    status='PENDING',
+                    adjusted_date__isnull=True,
+                    working_date__lte=current,
+                ).order_by('created_date').first()
+
+                if oldest_accrual:
+                    oldest_accrual.adjusted_date = current
+                    oldest_accrual.adjustment_reason = 'PUBLIC_HOLIDAY_OFF'
+                    oldest_accrual.save()
+                    adjusted += 1
+
+        current += timedelta(days=1)
+
+    return adjusted
+
+
 def auto_deduct_compoff_for_missing_weekdays_in_range(employee, from_date, to_date):
     """Mark PENDING CompOffs as TAKEN for missing weekday entries in a date range.
     
@@ -514,13 +602,28 @@ def delete_pending_compoff_for_workday(employee, working_date):
     ).delete()[0]
 
 
+def is_weekend_or_public_holiday_only(date_obj, employee=None):
+    """Return whether a date is eligible for CompOff generation.
+
+    US holidays are handled through accruals, not CompOffs.
+    """
+    if date_obj.weekday() >= 5:
+        return True
+
+    return holiday_exists_for_location(
+        date_obj,
+        ['PUBLIC_HOLIDAY'],
+        get_employee_location_name(employee),
+    )
+
+
 def create_compoff_for_submitted_entry_if_eligible(entry):
     """Create a pending CompOff for submitted weekend/public-holiday work."""
     if entry.status != 'SUBMITTED':
         return False
     if entry.hours < 8:
         return False
-    if not is_weekend_or_fixed_holiday(entry.date, employee=entry.employee):
+    if not is_weekend_or_public_holiday_only(entry.date, employee=entry.employee):
         return False
     if CompOff.objects.filter(employee=entry.employee, working_date=entry.date).exists():
         return False
@@ -531,6 +634,32 @@ def create_compoff_for_submitted_entry_if_eligible(entry):
         compoff_date=None,
         status='PENDING',
         notes=f'Auto-generated Comp-Off for working on weekend/holiday ({entry.date.strftime("%a, %b %d, %Y")})'
+    )
+    return True
+
+
+def create_accrual_for_submitted_entry_if_eligible(entry):
+    """Create a pending Accrual for submitted weekend/holiday work."""
+    if entry.status != 'SUBMITTED':
+        return False
+    if entry.hours < 8:
+        return False
+    if not is_weekend_or_fixed_holiday(entry.date, employee=entry.employee):
+        return False
+    if Accrual.objects.filter(
+        employee=entry.employee,
+        working_date=entry.date,
+        adjusted_date__isnull=True,
+    ).exists():
+        return False
+
+    Accrual.objects.create(
+        employee=entry.employee,
+        working_date=entry.date,
+        adjusted_date=None,
+        adjustment_reason=None,
+        status='PENDING',
+        notes=f'Auto-generated Accrual for working on weekend/holiday ({entry.date.strftime("%a, %b %d, %Y")})'
     )
     return True
 
@@ -681,25 +810,31 @@ def dashboard(request):
     admin = is_admin(request.user)
     
     if admin:
-        # Admins see all employees and all compoffs
+        # Admins see all employees and all compoffs/accruals
         total_employees = Employee.objects.count()
         total_compoffs = CompOff.objects.count()
         pending_compoffs = CompOff.objects.filter(status='PENDING').count()
+        total_accruals = Accrual.objects.count()
+        pending_accruals = Accrual.objects.filter(status='PENDING').count()
     else:
         # Non-admins see only their own data
         employee = get_user_employee(request.user)
         if not employee:
             messages.error(request, 'You do not have an associated employee record.')
             return redirect('compoff_list')
-        
+
         total_employees = 1  # Just themselves
         total_compoffs = CompOff.objects.filter(employee=employee).count()
         pending_compoffs = CompOff.objects.filter(employee=employee, status='PENDING').count()
-    
+        total_accruals = Accrual.objects.filter(employee=employee).count()
+        pending_accruals = Accrual.objects.filter(employee=employee, status='PENDING').count()
+
     context = {
         'total_employees': total_employees,
         'total_compoffs': total_compoffs,
         'pending_compoffs': pending_compoffs,
+        'total_accruals': total_accruals,
+        'pending_accruals': pending_accruals,
         'is_admin': admin,
     }
     return render(request, 'dashboard.html', context)
@@ -932,6 +1067,150 @@ def compoff_delete(request, pk):
     return redirect('compoff_list')
 
 
+# ============ ACCRUAL MANAGEMENT ============
+
+@login_required(login_url='login')
+def accrual_list(request):
+    """List accruals - employees see only their own, admins see all."""
+    if not can_access_employee_features(request.user):
+        return deny_employee_feature_access(request, 'accrual_list')
+
+    accruals = Accrual.objects.select_related('employee').order_by('-created_date')
+    admin = is_admin(request.user)
+    current_employee = None
+
+    if not admin:
+        current_employee = get_user_employee(request.user)
+        if not current_employee:
+            messages.error(request, 'You do not have an associated employee record.')
+            return redirect('dashboard')
+        accruals = accruals.filter(employee=current_employee)
+
+    status = request.GET.get('status', '')
+    if status:
+        accruals = accruals.filter(status=status)
+
+    employee_id = request.GET.get('employee', '')
+    if employee_id and admin:
+        accruals = accruals.filter(employee_id=employee_id)
+
+    if admin:
+        employees = Employee.objects.all()
+    else:
+        employees = [current_employee]
+
+    context = {
+        'accruals': accruals,
+        'employees': employees,
+        'selected_status': status,
+        'selected_employee': employee_id,
+        'is_admin': admin,
+    }
+    return render(request, 'timesheet/accrual_list.html', context)
+
+
+@login_required(login_url='login')
+def accrual_add(request):
+    """Add new accrual - employees can add their own, admins can manage any employee."""
+    if not can_access_employee_features(request.user):
+        return deny_employee_feature_access(request, 'accrual_add')
+
+    employee = None
+    if not is_admin(request.user):
+        employee = get_user_employee(request.user)
+        if not employee:
+            messages.error(request, 'You do not have an associated employee record.')
+            return redirect('dashboard')
+
+    if request.method == 'POST':
+        form = AccrualForm(
+            request.POST,
+            user=request.user,
+            is_admin=is_admin(request.user),
+            employee=employee if not is_admin(request.user) else None,
+        )
+        if form.is_valid():
+            accrual = form.save(commit=False)
+            if not is_admin(request.user):
+                accrual.employee = employee
+            accrual.save()
+            messages.success(request, 'Accrual added successfully!')
+            return redirect('accrual_list')
+    else:
+        form = AccrualForm(
+            user=request.user,
+            is_admin=is_admin(request.user),
+            employee=employee if not is_admin(request.user) else None,
+        )
+        if not is_admin(request.user):
+            form.fields['employee'].initial = employee
+
+    return render(request, 'timesheet/accrual_form.html', {'form': form, 'title': 'Add Accrual'})
+
+
+@login_required(login_url='login')
+def accrual_edit(request, pk):
+    """Edit accrual - employees can edit their own, admins can edit any accrual."""
+    if not can_access_employee_features(request.user):
+        return deny_employee_feature_access(request, 'accrual_edit')
+
+    accrual = get_object_or_404(Accrual, pk=pk)
+
+    if not is_admin(request.user):
+        employee = get_user_employee(request.user)
+        if not employee or accrual.employee != employee:
+            messages.error(request, 'You do not have permission to edit this Accrual.')
+            return redirect('accrual_list')
+    else:
+        employee = None
+
+    if request.method == 'POST':
+        form = AccrualForm(
+            request.POST,
+            instance=accrual,
+            user=request.user,
+            is_admin=is_admin(request.user),
+            employee=employee if not is_admin(request.user) else None,
+        )
+        if form.is_valid():
+            accrual = form.save(commit=False)
+            if not is_admin(request.user):
+                accrual.employee = employee
+            accrual.save()
+            messages.success(request, 'Accrual updated successfully!')
+            return redirect('accrual_list')
+    else:
+        form = AccrualForm(
+            instance=accrual,
+            user=request.user,
+            is_admin=is_admin(request.user),
+            employee=employee if not is_admin(request.user) else None,
+        )
+
+    return render(request, 'timesheet/accrual_form.html', {'form': form, 'title': 'Edit Accrual'})
+
+
+@login_required(login_url='login')
+@require_http_methods(["POST"])
+def accrual_delete(request, pk):
+    """Delete accrual - employees can delete their own, admins can delete any accrual."""
+    if not can_access_employee_features(request.user):
+        return deny_employee_feature_access(request, 'accrual_delete')
+
+    accrual = get_object_or_404(Accrual, pk=pk)
+
+    if not is_admin(request.user):
+        employee = get_user_employee(request.user)
+        if not employee or accrual.employee != employee:
+            messages.error(request, 'You do not have permission to delete this Accrual.')
+            return redirect('accrual_list')
+
+    employee_name = accrual.employee.name
+    accrual.delete()
+    messages.success(request, f'Accrual for {employee_name} deleted successfully!')
+    return redirect('accrual_list')
+
+
 # ============ REPORTS ============
 
 @login_required(login_url='login')
@@ -1047,6 +1326,18 @@ def client_reporting(request):
                         source_hours = compoff_source_hours.get((compoff.employee_id, compoff.working_date), 8)
                         compoff_hours_map[(compoff.employee_id, compoff.compoff_date)] = source_hours
 
+                    adjusted_public_holiday_accruals = Accrual.objects.filter(
+                        employee__in=employees,
+                        status='ADJUSTED',
+                        adjustment_reason='PUBLIC_HOLIDAY_OFF',
+                        adjusted_date__range=(start_date, end_date)
+                    )
+                    adjusted_public_holiday_hours_map = {
+                        (accrual.employee_id, accrual.adjusted_date): 8.0
+                        for accrual in adjusted_public_holiday_accruals
+                        if accrual.adjusted_date is not None
+                    }
+
                     totals_by_employee = {employee.id: 0 for employee in employees}
 
                     current_date = start_date
@@ -1062,12 +1353,14 @@ def client_reporting(request):
                             submitted_hours = entry_map.get((employee.id, current_date))
                             took_compoff = (employee.id, current_date) in compoff_map
 
-                            if date_type:
+                            public_holiday_accrual_hours = adjusted_public_holiday_hours_map.get((employee.id, current_date))
+
+                            if date_type and public_holiday_accrual_hours is None:
                                 display_hours = ''
                             elif took_compoff:
                                 display_hours = float(compoff_hours_map.get((employee.id, current_date), ''))
                             else:
-                                display_hours = submitted_hours if submitted_hours is not None else ''
+                                display_hours = public_holiday_accrual_hours if public_holiday_accrual_hours is not None else (submitted_hours if submitted_hours is not None else '')
 
                             if display_hours != '':
                                 totals_by_employee[employee.id] += float(display_hours)
@@ -1919,16 +2212,23 @@ def timesheet_entry_submit(request):
         # Show which dates were submitted for debugging
         messages.info(request, f'Submitted entries for: {", ".join(entry_dates)}')
         
-        # Create CompOffs for eligible submitted entries (weekend/holiday with 8+ hours)
+        # Create CompOffs and Accruals for eligible submitted entries (8+ hours)
         compoff_created = 0
+        accrual_created = 0
         for entry in entries_list:
             if create_compoff_for_submitted_entry_if_eligible(entry):
                 compoff_created += 1
                 logger.info(f"Comp-Off auto-created for {entry.employee.name} on {entry.date}")
-        
+            if create_accrual_for_submitted_entry_if_eligible(entry):
+                accrual_created += 1
+                logger.info(f"Accrual auto-created for {entry.employee.name} on {entry.date}")
+
         if compoff_created > 0:
             logger.info(f"{compoff_created} CompOff(s) created for working on weekend(s)/holiday(ies)")
             messages.info(request, f'{compoff_created} CompOff(s) created for working on weekend(s)/holiday(ies).')
+        if accrual_created > 0:
+            logger.info(f"{accrual_created} Accrual(s) created for working on weekend(s)/holiday(ies)")
+            messages.info(request, f'{accrual_created} Accrual(s) created for working on weekend(s)/holiday(ies).')
         
     # Deduct PENDING CompOffs for missing weekdays once the range has submitted entries.
     # This keeps "leave as compoff" working even if the user re-submits a range where
@@ -1939,6 +2239,13 @@ def timesheet_entry_submit(request):
         if compoff_deducted > 0:
             logger.info(f"{compoff_deducted} pending CompOff(s) marked as taken for missing weekday(s)")
             messages.info(request, f'{compoff_deducted} pending CompOff(s) marked as taken for missing weekday(s).')
+
+        accrual_leave_adjusted = auto_adjust_accrual_for_missing_weekdays_in_range(employee, from_date, to_date)
+        accrual_public_holiday_adjusted = auto_adjust_accrual_for_public_holiday_off_in_range(employee, from_date, to_date)
+        accrual_adjusted_total = accrual_leave_adjusted + accrual_public_holiday_adjusted
+        if accrual_adjusted_total > 0:
+            logger.info(f"{accrual_adjusted_total} pending Accrual(s) marked as adjusted for leave/public-holiday usage")
+            messages.info(request, f'{accrual_adjusted_total} pending Accrual(s) marked as adjusted for leave/public-holiday usage.')
     
     # Redirect back with employee info if admin
     redirect_url = reverse('timesheet_entry_list') + f'?month={selected_month}'

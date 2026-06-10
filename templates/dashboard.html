@@ -55,6 +55,36 @@
             <a href="{% url 'compoff_list' %}?status=PENDING" class="stretched-link"></a>
         </div>
     </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card" style="border-left: 4px solid #2ecc71; background: linear-gradient(135deg, #dff9ee 0%, #b7f0d0 100%);">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="text-muted mb-2">Total Accruals</h6>
+                        <h2 class="mb-0">{{ total_accruals }}</h2>
+                    </div>
+                    <i class="bi bi-coin" style="font-size: 2rem; opacity: 0.5;"></i>
+                </div>
+            </div>
+            <a href="{% url 'accrual_list' %}" class="stretched-link"></a>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card" style="border-left: 4px solid #f39c12; background: linear-gradient(135deg, #fff5e6 0%, #ffe0b3 100%);">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="text-muted mb-2">Pending Accruals</h6>
+                        <h2 class="mb-0">{{ pending_accruals }}</h2>
+                    </div>
+                    <i class="bi bi-hourglass-split" style="font-size: 2rem; opacity: 0.5;"></i>
+                </div>
+            </div>
+            <a href="{% url 'accrual_list' %}?status=PENDING" class="stretched-link"></a>
+        </div>
+    </div>
 </div>
 
 <!-- Quick Actions -->

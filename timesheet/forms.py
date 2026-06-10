@@ -2,7 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.db.models import Q
-from .models import Employee, Project, CompOff, Holiday, TimesheetImportLog, TimesheetEntry
+from .models import Employee, Project, CompOff, Accrual, Holiday, TimesheetImportLog, TimesheetEntry
 
 
 def _location_name(location):
@@ -208,6 +208,125 @@ class CompOffForm(forms.ModelForm):
                     'Comp-Off date cannot be a holiday or weekend.'
                 )
         return compoff_date
+
+
+class AccrualForm(forms.ModelForm):
+    """Form for creating/updating accruals (client/reporting perspective)
+    
+    Accruals are earned when:
+    - Working 8+ hours on Weekend
+    - Working 8+ hours on PUBLIC_HOLIDAY
+    - Working 8+ hours on US_HOLIDAY
+    
+    Accruals are adjusted when:
+    - Employee takes leave on working weekday
+    - Employee is off on PUBLIC_HOLIDAY
+    """
+    employee = forms.ModelChoiceField(
+        queryset=Employee.objects.filter(is_active=True),
+        empty_label="Select Employee",
+        widget=forms.Select(attrs={
+            'class': 'form-control'
+        })
+    )
+
+    def __init__(self, *args, **kwargs):
+        """Initialize form with user context to filter employee list"""
+        self.user = kwargs.pop('user', None)
+        self.is_admin = kwargs.pop('is_admin', False)
+        self.employee = kwargs.pop('employee', None)
+        super().__init__(*args, **kwargs)
+        
+        self._original_instance = self.instance
+        
+        # Filter employee queryset based on user role
+        if not self.is_admin and self.employee:
+            self.fields['employee'].queryset = Employee.objects.filter(pk=self.employee.pk)
+            self.fields['employee'].empty_label = None
+            self.fields['employee'].required = False
+            self.fields['employee'].disabled = True
+
+    def clean(self):
+        """Handle validation including disabled employee field"""
+        cleaned_data = super().clean()
+        
+        # Restore employee from disabled field
+        if self.fields['employee'].disabled:
+            if self._original_instance.pk:
+                cleaned_data['employee'] = self._original_instance.employee
+            elif self.employee:
+                cleaned_data['employee'] = self.employee
+        
+        if not cleaned_data.get('employee'):
+            raise forms.ValidationError('Employee field is required.')
+
+        working_date = cleaned_data.get('working_date')
+        adjusted_date = cleaned_data.get('adjusted_date')
+        if working_date and adjusted_date and adjusted_date < working_date:
+            raise ValidationError(
+                'Adjusted date cannot be earlier than the working date.'
+            )
+        
+        return cleaned_data
+
+    def _holiday_exists_for_employee(self, holiday_date, holiday_types=None):
+        """Check whether a holiday exists for the selected employee's location."""
+        employee = self.cleaned_data.get('employee') or self.employee
+        location = _location_name(getattr(employee, 'location', '')) if employee else ''
+        return _holiday_exists_for_location(holiday_date, holiday_types, location)
+
+    class Meta:
+        model = Accrual
+        fields = ['employee', 'working_date', 'adjusted_date', 'adjustment_reason', 'status', 'notes']
+        widgets = {
+            'working_date': forms.DateInput(attrs={
+                'class': 'form-control',
+                'type': 'date',
+                'placeholder': 'Date when work was done'
+            }),
+            'adjusted_date': forms.DateInput(attrs={
+                'class': 'form-control',
+                'type': 'date',
+                'placeholder': 'Date when accrual was set off'
+            }),
+            'adjustment_reason': forms.Select(attrs={
+                'class': 'form-control'
+            }),
+            'status': forms.Select(attrs={
+                'class': 'form-control'
+            }),
+            'notes': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 3,
+                'placeholder': 'Additional notes (optional)'
+            }),
+        }
+
+    def clean_working_date(self):
+        """Validate that working_date is a weekend or holiday"""
+        working_date = self.cleaned_data.get('working_date')
+        if working_date:
+            # Check if it's a special holiday - NOT ALLOWED for accruals
+            special_holiday = self._holiday_exists_for_employee(
+                working_date,
+                holiday_types=['SPECIAL_HOLIDAY']
+            )
+            if special_holiday:
+                raise forms.ValidationError(
+                    'Accrual cannot be created for special holidays.'
+                )
+            
+            # Check if it's a weekend (Saturday=5, Sunday=6)
+            if working_date.weekday() < 5:  # Monday to Friday
+                # Check if it's a public/US holiday
+                if not self._holiday_exists_for_employee(
+                    working_date,
+                    holiday_types=['PUBLIC_HOLIDAY', 'US_HOLIDAY']
+                ):
+                    raise forms.ValidationError(
+                        'Working date must be a weekend (Saturday/Sunday), public holiday, or US holiday.'
+                    )
+        return working_date
 
 
 class UserRegistrationForm(forms.ModelForm):

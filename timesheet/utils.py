@@ -4,7 +4,7 @@ import os
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 from openpyxl.utils import get_column_letter
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import logging
 from django.conf import settings
@@ -13,7 +13,7 @@ from django.db import transaction
 from django.db.models import Q
 from .models import (
     TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails,
-    Holiday, Employee, Project, Location, TimesheetEntry, CompOff
+    Holiday, Employee, Project, Location, TimesheetEntry, CompOff, Accrual
 )
 
 import_logger = logging.getLogger('timesheet.import')
@@ -156,6 +156,20 @@ def _is_weekend_or_public_holiday(entry_date, employee):
 
     holidays = Holiday.objects.filter(
         date=entry_date,
+        holiday_type__in=['PUBLIC_HOLIDAY']
+    )
+    location = _get_employee_location_name(employee)
+
+    return any(_holiday_applies_to_location(holiday, location) for holiday in holidays)
+
+
+def _is_weekend_or_holiday_for_accrual(entry_date, employee):
+    """Return whether an imported entry should create an Accrual record."""
+    if entry_date.weekday() >= 5:
+        return True
+
+    holidays = Holiday.objects.filter(
+        date=entry_date,
         holiday_type__in=['PUBLIC_HOLIDAY', 'US_HOLIDAY']
     )
     location = _get_employee_location_name(employee)
@@ -184,6 +198,32 @@ def _create_import_compoff_if_eligible(entry, results):
     results['compoff_created_count'] += 1
 
 
+def _create_import_accrual_if_eligible(entry, results):
+    """Create a pending Accrual for eligible imported submitted entries."""
+    if entry.status != 'SUBMITTED':
+        return
+    if entry.hours < 8:
+        return
+    if not _is_weekend_or_holiday_for_accrual(entry.date, entry.employee):
+        return
+    if Accrual.objects.filter(
+        employee=entry.employee,
+        working_date=entry.date,
+        adjusted_date__isnull=True,
+    ).exists():
+        return
+
+    Accrual.objects.create(
+        employee=entry.employee,
+        working_date=entry.date,
+        adjusted_date=None,
+        adjustment_reason=None,
+        status='PENDING',
+        notes=f'Auto-generated Accrual from client timesheet import ({entry.date.strftime("%a, %b %d, %Y")})'
+    )
+    results['accrual_created_count'] = results.get('accrual_created_count', 0) + 1
+
+
 def _delete_pending_import_compoff_if_ineligible(entry, results):
     """Remove an unused pending CompOff when an authoritative import clears eligibility."""
     if entry.status == 'SUBMITTED' and entry.hours >= 8 and _is_weekend_or_public_holiday(entry.date, entry.employee):
@@ -199,9 +239,10 @@ def _delete_pending_import_compoff_if_ineligible(entry, results):
 
 
 def _sync_import_compoff(entry, results):
-    """Keep pending CompOffs aligned with the imported cell value."""
+    """Keep pending CompOffs and Accruals aligned with the imported cell value."""
     _delete_pending_import_compoff_if_ineligible(entry, results)
     _create_import_compoff_if_eligible(entry, results)
+    _create_import_accrual_if_eligible(entry, results)
 
 
 def _is_import_workday_for_compoff_use(entry_date, employee):
@@ -227,12 +268,103 @@ def _has_positive_submitted_hours(employee, entry_date):
     ).exists()
 
 
+def _get_import_candidate_dates(results):
+    """Return employee/date pairs to evaluate during import adjustment logic."""
+    affected = set(results.get('_affected_employee_dates', set()))
+    if not affected:
+        return set()
+
+    start_date = results.get('import_start_date')
+    end_date = results.get('import_end_date')
+    if start_date and end_date:
+        employee_ids = {employee_id for employee_id, _ in affected}
+        current = start_date
+        candidate_dates = set()
+        while current <= end_date:
+            candidate_dates.update((employee_id, current) for employee_id in employee_ids)
+            current += timedelta(days=1)
+        return candidate_dates
+
+    return affected
+
+
+def _auto_adjust_pending_accruals_for_import(results):
+    """Mark pending Accruals as adjusted for imported leave/public-holiday-off days."""
+    if results.get('import_status') != 'SUBMITTED':
+        return
+
+    affected = _get_import_candidate_dates(results)
+    if not affected:
+        return
+
+    employee_ids = {employee_id for employee_id, _ in affected}
+    employees = {
+        employee.id: employee
+        for employee in Employee.objects.filter(id__in=employee_ids).select_related('location')
+    }
+
+    for employee_id, entry_date in sorted(affected, key=lambda item: (item[0], item[1])):
+        employee = employees.get(employee_id)
+        if not employee:
+            continue
+
+        if not _has_positive_submitted_hours(employee, entry_date):
+            # Leave taken on a regular weekday: reduce pending accruals
+            if entry_date.weekday() < 5 and not any(
+                holiday.date == entry_date and _holiday_applies_to_location(holiday, _get_employee_location_name(employee))
+                for holiday in Holiday.objects.filter(date=entry_date, holiday_type__in=['PUBLIC_HOLIDAY', 'US_HOLIDAY', 'SPECIAL_HOLIDAY'])
+            ):
+                existing = Accrual.objects.filter(
+                    employee=employee,
+                    status='ADJUSTED',
+                    adjusted_date=entry_date,
+                    adjustment_reason='LEAVE_TAKEN',
+                ).exists()
+                if not existing:
+                    oldest_accrual = Accrual.objects.filter(
+                        employee=employee,
+                        status='PENDING',
+                        adjusted_date__isnull=True,
+                        working_date__lte=entry_date,
+                    ).order_by('created_date').first()
+                    if oldest_accrual:
+                        oldest_accrual.adjusted_date = entry_date
+                        oldest_accrual.adjustment_reason = 'LEAVE_TAKEN'
+                        oldest_accrual.save()
+                        results['accrual_adjusted_count'] = results.get('accrual_adjusted_count', 0) + 1
+
+            # Public holiday off: reduce pending accruals on the holiday date itself
+            public_holidays = Holiday.objects.filter(
+                date=entry_date,
+                holiday_type='PUBLIC_HOLIDAY',
+            )
+            if any(_holiday_applies_to_location(holiday, _get_employee_location_name(employee)) for holiday in public_holidays):
+                existing = Accrual.objects.filter(
+                    employee=employee,
+                    status='ADJUSTED',
+                    adjusted_date=entry_date,
+                    adjustment_reason='PUBLIC_HOLIDAY_OFF',
+                ).exists()
+                if not existing:
+                    oldest_accrual = Accrual.objects.filter(
+                        employee=employee,
+                        status='PENDING',
+                        adjusted_date__isnull=True,
+                        working_date__lte=entry_date,
+                    ).order_by('created_date').first()
+                    if oldest_accrual:
+                        oldest_accrual.adjusted_date = entry_date
+                        oldest_accrual.adjustment_reason = 'PUBLIC_HOLIDAY_OFF'
+                        oldest_accrual.save()
+                        results['accrual_adjusted_count'] = results.get('accrual_adjusted_count', 0) + 1
+
+
 def _auto_apply_pending_compoffs_for_import(results):
     """Mark pending CompOffs as taken for imported weekday zero/blank days."""
     if results.get('import_status') != 'SUBMITTED':
         return
 
-    affected = results.get('_affected_employee_dates', set())
+    affected = _get_import_candidate_dates(results)
     if not affected:
         return
 
@@ -760,9 +892,12 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, start_date=
             'failed_records': [],
             'exception_report_path': '',
             'import_status': _get_client_timesheet_import_status(),
+            'import_start_date': start_date,
+            'import_end_date': end_date,
             'compoff_created_count': 0,
             'compoff_deleted_count': 0,
             'compoff_taken_count': 0,
+            'accrual_created_count': 0,
             '_affected_employee_dates': set(),
         }
 
@@ -849,6 +984,7 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, start_date=
                 )
 
         _auto_apply_pending_compoffs_for_import(results)
+        _auto_adjust_pending_accruals_for_import(results)
 
         if results['errors']:
             results['success'] = False
@@ -860,7 +996,8 @@ def import_client_timesheet_entries(file_obj, overwrite_drafts=True, start_date=
                 f"Updated={results['updated_count']}, Skipped={results['skipped_count']}, "
                 f"CompOffsCreated={results['compoff_created_count']}, "
                 f"CompOffsDeleted={results['compoff_deleted_count']}, "
-                f"CompOffsTaken={results['compoff_taken_count']}"
+                f"CompOffsTaken={results['compoff_taken_count']}, "
+                f"AccrualsCreated={results.get('accrual_created_count', 0)}"
             )
 
         results['exception_report_path'] = _write_client_import_exception_report(results)
