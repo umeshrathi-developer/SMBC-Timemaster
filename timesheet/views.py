@@ -1326,15 +1326,15 @@ def client_reporting(request):
                         source_hours = compoff_source_hours.get((compoff.employee_id, compoff.working_date), 8)
                         compoff_hours_map[(compoff.employee_id, compoff.compoff_date)] = source_hours
 
-                    adjusted_public_holiday_accruals = Accrual.objects.filter(
+                    adjusted_accruals = Accrual.objects.filter(
                         employee__in=employees,
                         status='ADJUSTED',
-                        adjustment_reason='PUBLIC_HOLIDAY_OFF',
+                        adjustment_reason__in=['PUBLIC_HOLIDAY_OFF', 'LEAVE_TAKEN'],
                         adjusted_date__range=(start_date, end_date)
                     )
-                    adjusted_public_holiday_hours_map = {
+                    adjusted_accrual_hours_map = {
                         (accrual.employee_id, accrual.adjusted_date): 8.0
-                        for accrual in adjusted_public_holiday_accruals
+                        for accrual in adjusted_accruals
                         if accrual.adjusted_date is not None
                     }
 
@@ -1353,14 +1353,14 @@ def client_reporting(request):
                             submitted_hours = entry_map.get((employee.id, current_date))
                             took_compoff = (employee.id, current_date) in compoff_map
 
-                            public_holiday_accrual_hours = adjusted_public_holiday_hours_map.get((employee.id, current_date))
+                            adjusted_accrual_hours = adjusted_accrual_hours_map.get((employee.id, current_date))
 
-                            if date_type and public_holiday_accrual_hours is None:
+                            if date_type and adjusted_accrual_hours is None:
                                 display_hours = ''
                             elif took_compoff:
                                 display_hours = float(compoff_hours_map.get((employee.id, current_date), ''))
                             else:
-                                display_hours = public_holiday_accrual_hours if public_holiday_accrual_hours is not None else (submitted_hours if submitted_hours is not None else '')
+                                display_hours = adjusted_accrual_hours if adjusted_accrual_hours is not None else (submitted_hours if submitted_hours is not None else '')
 
                             if display_hours != '':
                                 totals_by_employee[employee.id] += float(display_hours)
