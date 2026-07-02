@@ -772,6 +772,40 @@ class ClientReportingRulesTests(TestCase):
         self.assertEqual(response.context['report_rows'][0]['hours'][0], 8.0)
         self.assertEqual(response.context['employee_totals'][0], 8.0)
 
+    def test_client_reporting_footer_lists_adjusted_accrual_dates(self):
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 4),
+            adjusted_date=date(2026, 4, 6),
+            adjustment_reason='LEAVE_TAKEN',
+            status='ADJUSTED',
+            notes='Adjusted for leave taken',
+        )
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 3),
+            adjusted_date=date(2026, 4, 7),
+            adjustment_reason='PUBLIC_HOLIDAY_OFF',
+            status='ADJUSTED',
+            notes='Adjusted for public holiday off',
+        )
+
+        self.client.login(username='admin', password='testpass123')
+        response = self.client.get(
+            reverse('client_reporting'),
+            {
+                'manager': 'Manager Three',
+                'start_date': '2026-04-01',
+                'end_date': '2026-04-30',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['accrual_adjusted_list'][0],
+            'Worked on 04-Apr-2026, 03-Apr-2026 adjusted against PTO on 06-Apr-2026, 07-Apr-2026'
+        )
+
     def test_client_reporting_shows_taken_compoff_hours_on_adjusted_weekday(self):
         TimesheetEntry.objects.create(
             employee=self.employee,
