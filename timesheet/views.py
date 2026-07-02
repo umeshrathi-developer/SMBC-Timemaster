@@ -1402,14 +1402,44 @@ def client_reporting(request):
                         accrual_days = [c.working_date.strftime('%d-%b-%Y') for c in pending_compoffs if c.working_date]
                         accrual_days_list.append(', '.join(accrual_days) if accrual_days else '')
 
-                        # Accrual Adjusted: Comp-Off dates for 'TAKEN' status within date range
+                        # Accrual Adjusted: include both taken CompOffs and adjusted Accruals.
                         taken_compoffs = CompOff.objects.filter(
                             employee=employee,
                             status='TAKEN',
                             compoff_date__range=(start_date, end_date)
-                        )
-                        accrual_adjusted = [c.compoff_date.strftime('%d-%b-%Y') for c in taken_compoffs if c.compoff_date]
-                        accrual_adjusted_list.append(', '.join(accrual_adjusted) if accrual_adjusted else '')
+                        ).order_by('compoff_date', 'working_date')
+                        adjusted_accruals = Accrual.objects.filter(
+                            employee=employee,
+                            status='ADJUSTED',
+                            adjusted_date__range=(start_date, end_date)
+                        ).order_by('adjusted_date', 'working_date')
+
+                        adjusted_details = []
+                        compoff_adjusted_dates = [
+                            item.compoff_date.strftime('%d-%b-%Y')
+                            for item in taken_compoffs
+                            if item.compoff_date
+                        ]
+                        if compoff_adjusted_dates:
+                            adjusted_details.append(', '.join(compoff_adjusted_dates))
+
+                        accrual_work_dates = [
+                            item.working_date.strftime('%d-%b-%Y')
+                            for item in adjusted_accruals
+                            if item.working_date
+                        ]
+                        accrual_adjusted_dates = [
+                            item.adjusted_date.strftime('%d-%b-%Y')
+                            for item in adjusted_accruals
+                            if item.adjusted_date
+                        ]
+                        if accrual_work_dates and accrual_adjusted_dates:
+                            adjusted_details.append(
+                                f"Worked on {', '.join(accrual_work_dates)} adjusted against PTO on "
+                                f"{', '.join(accrual_adjusted_dates)}"
+                            )
+
+                        accrual_adjusted_list.append('; '.join(adjusted_details))
                 else:
                     messages.warning(request, 'No employees found for the selected manager.')
 
