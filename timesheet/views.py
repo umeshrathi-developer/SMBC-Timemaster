@@ -1348,12 +1348,14 @@ def client_reporting(request):
                         ]
                         row_hours = []
                         row_compoff_taken = []
+                        row_accrual_adjusted = []
                         for employee in employees:
                             date_type = get_date_type(current_date, employee=employee)
                             submitted_hours = entry_map.get((employee.id, current_date))
                             took_compoff = (employee.id, current_date) in compoff_map
 
                             adjusted_accrual_hours = adjusted_accrual_hours_map.get((employee.id, current_date))
+                            has_adjusted_accrual = adjusted_accrual_hours is not None
 
                             if date_type and adjusted_accrual_hours is None:
                                 display_hours = ''
@@ -1367,13 +1369,15 @@ def client_reporting(request):
 
                             row_hours.append(display_hours)
                             row_compoff_taken.append(took_compoff)
+                            row_accrual_adjusted.append(has_adjusted_accrual)
 
                         report_rows.append({
                             'date': current_date,
                             'date_type': row_date_types[0] if row_date_types else '',
                             'is_holiday_or_weekend': any(bool(date_type) for date_type in row_date_types),
                             'hours': row_hours,
-                            'compoff_taken': row_compoff_taken
+                            'compoff_taken': row_compoff_taken,
+                            'accrual_adjusted': row_accrual_adjusted
                         })
                         current_date += timedelta(days=1)
 
