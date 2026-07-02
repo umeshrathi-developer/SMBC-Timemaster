@@ -122,7 +122,7 @@ Timemaster automation/
 
 ### Holiday
 - **date**: Holiday/Weekend date
-- **holiday_type**: Type (PUBLIC_HOLIDAY, WEEKEND, SPECIAL_HOLIDAY)
+- **holiday_type**: Type (PUBLIC_HOLIDAY, WEEKEND, US_HOLIDAY, SPECIAL_HOLIDAY)
   SPECIAL_HOLIDAY is a mandatory company holiday.
 - **name**: Holiday name/description
 - **location**: Optional location tied to the holiday
@@ -264,6 +264,12 @@ Replace `localhost` with server's IP address:
 ```
 http://192.168.1.100:8000/timesheet/
 ```
+
+### Docker Deployment
+
+For a single-container deployment on a server running multiple services, use the Docker setup in `Dockerfile` and `docker-compose.yml`.
+
+See `docs/DOCKER_DEPLOYMENT.md` for the build, environment, volume, and startup commands.
 
 
 ### Export to CSV

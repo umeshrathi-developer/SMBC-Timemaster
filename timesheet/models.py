@@ -72,6 +72,7 @@ class Holiday(models.Model):
     HOLIDAY_TYPES = (
         ('PUBLIC_HOLIDAY', 'Public Holiday'),
         ('WEEKEND', 'Weekend'),
+        ('US_HOLIDAY', 'US Holiday'),
         ('SPECIAL_HOLIDAY', 'Special Holiday'),
     )
 
@@ -114,6 +115,61 @@ class CompOff(models.Model):
 
     def __str__(self):
         return '{} - Comp-Off (Status: {})'.format(self.employee.name, self.status)
+
+
+class Accrual(models.Model):
+    """Accrual table - Tracks accrued hours from working on holidays (client/reporting perspective)
+    
+    Business Logic:
+    - PENDING: Accrued hours not yet adjusted/taken
+    - ADJUSTED: Accrued hours have been set off (against leave or public holiday)
+    
+    Accruals are created when:
+    - Employee works 8+ hours on Weekend
+    - Employee works 8+ hours on PUBLIC_HOLIDAY
+    - Employee works 8+ hours on US_HOLIDAY
+    
+    Accruals are reduced when:
+    - Employee takes leave on working weekday (reduces PENDING accruals)
+    - Employee is off on PUBLIC_HOLIDAY (reduces PENDING accruals)
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('ADJUSTED', 'Adjusted'),
+    )
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='accruals')
+    working_date = models.DateField(null=True, blank=True, help_text='Date when work was done to earn the accrual')
+    adjusted_date = models.DateField(null=True, blank=True, help_text='Date when accrual was adjusted/set off')
+    adjustment_reason = models.CharField(max_length=50, choices=[
+        ('LEAVE_TAKEN', 'Leave Taken on Weekday'),
+        ('PUBLIC_HOLIDAY_OFF', 'Off on Public Holiday'),
+    ], null=True, blank=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='PENDING')
+    created_date = models.DateTimeField(auto_now_add=True)
+    updated_date = models.DateTimeField(auto_now=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = 'Accrual'
+        verbose_name_plural = 'Accruals'
+        ordering = ['-created_date']
+
+    def save(self, *args, **kwargs):
+        """Auto-update status based on adjusted_date"""
+        from datetime import date
+        
+        # If adjusted_date is empty, ensure status is PENDING
+        if not self.adjusted_date:
+            self.status = 'PENDING'
+        # If adjusted_date is set, change status to ADJUSTED
+        elif self.adjusted_date:
+            self.status = 'ADJUSTED'
+        
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return '{} - Accrual (Status: {})'.format(self.employee.name, self.status)
 
 
 class TimesheetSummary(models.Model):

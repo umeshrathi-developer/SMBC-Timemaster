@@ -87,3 +87,24 @@ class LocationAwareHolidayTests(TestCase):
         )
 
         self.assertTrue(form.is_valid(), form.errors)
+
+    def test_compoff_form_validates_us_holiday_by_employee_location(self):
+        Holiday.objects.create(
+            name='Indore US Holiday',
+            date=date(2026, 5, 4),
+            holiday_type='US_HOLIDAY',
+            location=get_location('Indore'),
+        )
+
+        form = CompOffForm(
+            data={
+                'employee': self.employee.pk,
+                'working_date': '2026-05-04',
+                'compoff_date': '2026-05-05',
+                'status': 'PENDING',
+                'notes': '',
+            },
+            is_admin=True,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)

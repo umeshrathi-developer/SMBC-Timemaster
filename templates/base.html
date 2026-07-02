@@ -264,6 +264,10 @@
                     <a href="{% url 'compoff_list' %}" class="nav-link {% if 'compoff' in request.resolver_match.url_name %}active{% endif %}">
                         <i class="bi bi-calendar-x"></i> CompOffs
                     </a>
+
+                    <a href="{% url 'accrual_list' %}" class="nav-link {% if 'accrual' in request.resolver_match.url_name %}active{% endif %}">
+                        <i class="bi bi-pie-chart"></i> Accruals
+                    </a>
                     
                     <a href="{% url 'timesheet_entry_list' %}" class="nav-link {% if 'timesheet_entry' in request.resolver_match.url_name %}active{% endif %}">
                         <i class="bi bi-file-earmark-text"></i> Client Timesheet

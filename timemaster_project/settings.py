@@ -8,13 +8,40 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def env_list(name, default=None):
+    value = os.environ.get(name)
+    if value is None:
+        return default or []
+    return [item.strip() for item in value.replace(',', ' ').split() if item.strip()]
+
+
+DATA_DIR = Path(os.environ.get('DATA_DIR', BASE_DIR))
+LOG_DIR = Path(os.environ.get('LOG_DIR', BASE_DIR / 'logs'))
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-tr@p%q8j#9$k!z&*@x7v#1m9p&k@3r!9&5j8m#1k$5l&9n#2q'
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-tr@p%q8j#9$k!z&*@x7v#1m9p&k@3r!9&5j8m#1k$5l&9n#2q',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('DEBUG', True)
 
-ALLOWED_HOSTS = ['*']  # For private network, can be restricted to specific IPs/hostnames
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', ['*'])
+for _host in ('localhost', '127.0.0.1'):
+    if _host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host)
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS')
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Application definition
 INSTALLED_APPS = [
@@ -29,6 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -62,7 +90,7 @@ WSGI_APPLICATION = 'timemaster_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': os.environ.get('SQLITE_PATH', DATA_DIR / 'db.sqlite3'),
     }
 }
 
@@ -84,7 +112,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = os.environ.get('TIME_ZONE', 'UTC')
 USE_I18N = True
 USE_TZ = True
 
@@ -92,10 +120,18 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+SERVE_MEDIA = env_bool('SERVE_MEDIA', DEBUG)
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -112,16 +148,19 @@ LOGOUT_REDIRECT_URL = 'login'
 SESSION_COOKIE_AGE = 8 * 60 * 60
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', False)
+CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', False)
+SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', False)
 
 # Email configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
 
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'umesh.rathi@infobeans.com')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'tpau ezxt wghj llzw')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'umesh.rathi@infobeans.com')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 
 # Accrual summary is sent as one consolidated email for all teams.
 ACCRUAL_SUMMARY_TO_EMAILS = os.environ.get('ACCRUAL_SUMMARY_TO_EMAILS', '')
@@ -161,7 +200,7 @@ LOGGING = {
         'file': {
             'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'timemaster.log',
+            'filename': LOG_DIR / 'timemaster.log',
             'maxBytes': 1024 * 1024 * 10,  # 10 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -169,7 +208,7 @@ LOGGING = {
         'error_file': {
             'level': 'ERROR',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'errors.log',
+            'filename': LOG_DIR / 'errors.log',
             'maxBytes': 1024 * 1024 * 10,  # 10 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -177,7 +216,7 @@ LOGGING = {
         'access_file': {
             'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'access.log',
+            'filename': LOG_DIR / 'access.log',
             'maxBytes': 1024 * 1024 * 10,  # 10 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -214,6 +253,6 @@ LOGGING = {
 
 # Create logs directory if it doesn't exist
 import os as _os
-_logs_dir = BASE_DIR / 'logs'
-if not _os.path.exists(_logs_dir):
-    _os.makedirs(_logs_dir)
+for _directory in (DATA_DIR, LOG_DIR, MEDIA_ROOT):
+    if not _os.path.exists(_directory):
+        _os.makedirs(_directory)

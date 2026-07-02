@@ -4,7 +4,7 @@ from django.shortcuts import render, redirect
 from django.urls import path
 from django.contrib import messages
 import logging
-from .models import Project, Location, Employee, Holiday, CompOff, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
+from .models import Project, Location, Employee, Holiday, CompOff, Accrual, TimesheetSummary, TimesheetDetails, AttendanceSummary, AttendanceDetails, TimesheetImportLog, TimesheetEntry
 from .forms import TimesheetImportForm
 from .utils import import_employee_file, import_holiday_file
 
@@ -133,6 +133,7 @@ class HolidayAdminForm(forms.ModelForm):
     holiday_type = forms.ChoiceField(
         choices=[
             ('PUBLIC_HOLIDAY', 'Public Holiday'),
+            ('US_HOLIDAY', 'US Holiday'),
             ('SPECIAL_HOLIDAY', 'Special Holiday'),
         ],
         widget=forms.Select(attrs={
@@ -153,7 +154,7 @@ class HolidayImportForm(forms.Form):
             'class': 'form-control',
             'accept': '.xlsx,.xlsm',
         }),
-        help_text='Upload an Excel file with columns: S. No., Date, Day, Holiday, Applicability'
+        help_text='Upload an Excel file with columns: S. No., Date, Day, Holiday, Holiday Type, Applicability'
     )
 
     def clean_file(self):
@@ -413,6 +414,7 @@ admin.site.register(Location, LocationAdmin)
 admin.site.register(Employee, EmployeeAdmin)
 admin.site.register(Holiday, HolidayAdmin)
 admin.site.register(CompOff)
+admin.site.register(Accrual)
 admin.site.register(TimesheetEntry, TimesheetEntryAdmin)
 # TimesheetSummary is registered via @admin.register decorator
 # Models are now registered with the custom admin site in urls.py
