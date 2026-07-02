@@ -772,7 +772,13 @@ class ClientReportingRulesTests(TestCase):
         self.assertEqual(response.context['report_rows'][0]['hours'][0], 8.0)
         self.assertEqual(response.context['employee_totals'][0], 8.0)
 
-    def test_client_reporting_footer_lists_adjusted_accrual_dates(self):
+    def test_client_reporting_footer_lists_accrual_dates(self):
+        Accrual.objects.create(
+            employee=self.employee,
+            working_date=date(2026, 4, 8),
+            status='PENDING',
+            notes='Pending accrual',
+        )
         Accrual.objects.create(
             employee=self.employee,
             working_date=date(2026, 4, 4),
@@ -801,9 +807,11 @@ class ClientReportingRulesTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['accrual_pending_hours_list'][0], 8)
+        self.assertEqual(response.context['accrual_days_list'][0], '08-Apr-2026')
         self.assertEqual(
             response.context['accrual_adjusted_list'][0],
-            'Worked on 04-Apr-2026, 03-Apr-2026 adjusted against PTO on 06-Apr-2026, 07-Apr-2026'
+            '06-Apr-2026, 07-Apr-2026'
         )
 
     def test_client_reporting_shows_taken_compoff_hours_on_adjusted_weekday(self):

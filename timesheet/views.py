@@ -1393,53 +1393,34 @@ def client_reporting(request):
                     accrual_adjusted_list = []
 
                     for employee in employees:
-                        # Accrual Pending in Hours: count of pending CompOffs * 8 (assuming 8 hours per day)
-                        pending_compoffs = CompOff.objects.filter(employee=employee, status='PENDING')
-                        accrual_pending_hours = pending_compoffs.count() * 8
+                        pending_accruals = Accrual.objects.filter(
+                            employee=employee,
+                            status='PENDING'
+                        ).order_by('working_date')
+                        accrual_pending_hours = pending_accruals.count() * 8
                         accrual_pending_hours_list.append(accrual_pending_hours)
 
-                        # Accrual Days: dates of pending compoffs (working_date)
-                        accrual_days = [c.working_date.strftime('%d-%b-%Y') for c in pending_compoffs if c.working_date]
+                        # Accrual Days: dates when accrual got added.
+                        accrual_days = [
+                            accrual.working_date.strftime('%d-%b-%Y')
+                            for accrual in pending_accruals
+                            if accrual.working_date
+                        ]
                         accrual_days_list.append(', '.join(accrual_days) if accrual_days else '')
 
-                        # Accrual Adjusted: include both taken CompOffs and adjusted Accruals.
-                        taken_compoffs = CompOff.objects.filter(
-                            employee=employee,
-                            status='TAKEN',
-                            compoff_date__range=(start_date, end_date)
-                        ).order_by('compoff_date', 'working_date')
                         adjusted_accruals = Accrual.objects.filter(
                             employee=employee,
                             status='ADJUSTED',
                             adjusted_date__range=(start_date, end_date)
                         ).order_by('adjusted_date', 'working_date')
 
-                        adjusted_details = []
-                        compoff_adjusted_dates = [
-                            item.compoff_date.strftime('%d-%b-%Y')
-                            for item in taken_compoffs
-                            if item.compoff_date
-                        ]
-                        if compoff_adjusted_dates:
-                            adjusted_details.append(', '.join(compoff_adjusted_dates))
-
-                        accrual_work_dates = [
-                            item.working_date.strftime('%d-%b-%Y')
-                            for item in adjusted_accruals
-                            if item.working_date
-                        ]
+                        # Accrual Adjusted: dates when accrual got used.
                         accrual_adjusted_dates = [
-                            item.adjusted_date.strftime('%d-%b-%Y')
-                            for item in adjusted_accruals
-                            if item.adjusted_date
+                            accrual.adjusted_date.strftime('%d-%b-%Y')
+                            for accrual in adjusted_accruals
+                            if accrual.adjusted_date
                         ]
-                        if accrual_work_dates and accrual_adjusted_dates:
-                            adjusted_details.append(
-                                f"Worked on {', '.join(accrual_work_dates)} adjusted against PTO on "
-                                f"{', '.join(accrual_adjusted_dates)}"
-                            )
-
-                        accrual_adjusted_list.append('; '.join(adjusted_details))
+                        accrual_adjusted_list.append(', '.join(accrual_adjusted_dates) if accrual_adjusted_dates else '')
                 else:
                     messages.warning(request, 'No employees found for the selected manager.')
 
