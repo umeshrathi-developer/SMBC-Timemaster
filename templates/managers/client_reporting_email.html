@@ -47,7 +47,7 @@ Please let me know if you have any questions.</p>
                     {% endif %}
                 </td>
                 {% for value in row.hours %}
-                <td {% if row.compoff_taken|get_item:forloop.counter0 %}class="compoff-taken-cell"{% endif %}>{% if value %}{{ value }}{% else %}&nbsp;{% endif %}</td>
+                <td {% if row.compoff_taken|get_item:forloop.counter0 or row.accrual_adjusted|get_item:forloop.counter0 %}class="compoff-taken-cell"{% endif %}>{% if value %}{{ value }}{% else %}&nbsp;{% endif %}</td>
                 {% endfor %}
             </tr>
             {% endfor %}
